@@ -1,0 +1,1116 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  font-size: 12px;
+  color: #1e1e1e;
+  background: #f3f3f3;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------ */
+/* Toolbar                                                             */
+/* ------------------------------------------------------------------ */
+#toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  background: #ffffff;
+  border-bottom: 1px solid #d0d0d0;
+  padding: 4px 8px;
+  min-height: 38px;
+  user-select: none;
+}
+
+.tb-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 6px;
+  border-right: 1px solid #e0e0e0;
+}
+
+.tb-group:last-child {
+  border-right: none;
+}
+
+.tb-grow {
+  flex: 1;
+  border-right: none;
+  padding: 0;
+}
+
+#toolbar button,
+#toolbar select {
+  height: 28px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  padding: 0 7px;
+  color: #1e1e1e;
+}
+
+#toolbar button:hover,
+#toolbar select:hover {
+  background: #e8e8e8;
+}
+
+#toolbar button.active {
+  background: #cfe4ff;
+  border-color: #7ab0e8;
+}
+
+#toolbar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+#toolbar button:disabled:hover {
+  background: transparent;
+}
+
+#toolbar select {
+  padding: 0 4px;
+  max-width: 150px;
+}
+
+.tb-caret {
+  font-size: 10px;
+  color: #888;
+}
+
+.tb-swatch-bar {
+  display: inline-block;
+  width: 14px;
+  height: 3px;
+  vertical-align: middle;
+  margin-left: 3px;
+  background: transparent;
+  border-bottom: 1px solid #999;
+}
+
+/* Dropdown menus (color / highlight) */
+.tb-dropdown {
+  position: absolute;
+  z-index: 50;
+  background: #ffffff;
+  border: 1px solid #c8c8c8;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  border-radius: 4px;
+  padding: 8px;
+}
+
+.tb-dropdown .swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 22px);
+  gap: 4px;
+}
+
+.tb-dropdown .swatch {
+  width: 22px;
+  height: 22px;
+  border: 1px solid #999;
+  border-radius: 2px;
+  cursor: pointer;
+  padding: 0;
+}
+
+.tb-dropdown .swatch:hover {
+  outline: 2px solid #7ab0e8;
+}
+
+.tb-dropdown .swatch-row {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.tb-dropdown .swatch-row button {
+  flex: 1;
+  height: 22px;
+  font-size: 12px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Canvas + page                                                       */
+/* ------------------------------------------------------------------ */
+#canvas {
+  flex: 1;
+  overflow-y: auto;
+  background: #e8eaed;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+#editor {
+  outline: none;
+  min-width: var(--page-w, 210mm);
+}
+
+#editor.fw-doc {
+  --page-w: 210mm;
+  --page-h: 297mm;
+  --m-t: 25.4mm;
+  --m-r: 25.4mm;
+  --m-b: 25.4mm;
+  --m-l: 25.4mm;
+}
+
+.fw-page {
+  width: var(--page-w);
+  height: var(--page-h);
+  box-sizing: border-box;
+  padding: var(--m-t) var(--m-r) var(--m-b) var(--m-l);
+  overflow: hidden;
+  background: white;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  margin: 0 auto 24px;
+  font-family: Calibri, "Segoe UI", sans-serif;
+  font-size: 11pt;
+  color: #000;
+}
+
+.fw-page:last-child {
+  margin-bottom: 0;
+}
+
+.fw-page p,
+.fw-page h1,
+.fw-page h2,
+.fw-page h3 {
+  margin: 0 0 6pt;
+  line-height: 1.15;
+}
+
+.fw-page p:last-child {
+  margin-bottom: 0;
+}
+
+.fw-page h1 {
+  font-size: 24pt;
+  font-weight: bold;
+}
+
+.fw-page h2 {
+  font-size: 18pt;
+  font-weight: bold;
+}
+
+.fw-page h3 {
+  font-size: 14pt;
+  font-weight: bold;
+}
+
+.fw-page ul {
+  list-style: disc;
+  padding-left: 20pt;
+  margin: 0 0 6pt;
+}
+
+.fw-page ol {
+  list-style: decimal;
+  padding-left: 20pt;
+  margin: 0 0 6pt;
+}
+
+.fw-page li > ul,
+.fw-page li > ol {
+  margin: 0;
+}
+
+.fw-page ul,
+.fw-page ol {
+  line-height: 1.15;
+}
+
+/* Tables */
+.fw-page table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0 0 6pt;
+}
+
+/*
+ * Column resizing (prosemirror-tables). The plugin moves a
+ * `.column-resize-handle` div around inside the table's `tableWrapper`, and
+ * marks drag-selected cells with `.selectedCell`; both need a positioned
+ * ancestor and a visible treatment or resizing feels broken.
+ */
+.fw-page .tableWrapper {
+  position: relative;
+}
+
+.fw-page .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 4px;
+  background: #7ab0e8;
+  pointer-events: none;
+}
+
+.fw-page .selectedCell {
+  position: relative;
+}
+
+.fw-page .selectedCell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(122, 176, 232, 0.25);
+  pointer-events: none;
+}
+
+.fw-page .tableCellResizing {
+  cursor: col-resize;
+}
+
+.fw-page td,
+.fw-page th {
+  border: 1px solid #767171;
+  padding: 3px 6px;
+  vertical-align: top;
+  min-width: 24px;
+}
+
+.fw-page th {
+  background: #f2f2f2;
+  font-weight: bold;
+}
+
+.fw-page p.ProseMirror-selectednode,
+.fw-page table.ProseMirror-selectednode {
+  outline: 2px solid #7ab0e8;
+}
+
+/* Images */
+.fw-page img {
+  max-width: 100%;
+  height: auto;
+}
+
+.fw-page img.ProseMirror-selectednode {
+  outline: 2px solid #7ab0e8;
+}
+
+/* Inline code (the `code` mark) — Word's "monospace over the text". */
+.fw-page code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.95em;
+  background: #f2f2f2;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/*
+ * Links. The renderer never navigates: Ctrl/Cmd+click hands the URL to the
+ * main process (which re-checks the scheme) and a plain click only places the
+ * caret, so the cursor stays a text cursor.
+ */
+.fw-page a {
+  color: #0563c1;
+  text-decoration: underline;
+  cursor: text;
+}
+
+.fw-pagebreak {
+  border-top: 1px dashed #bbb;
+  height: 8px;
+  margin: 4px 0;
+}
+
+/* Placeholder (TipTap adds data-placeholder to the empty textblock) */
+.fw-page p.is-editor-empty:first-child::before {
+  color: #999;
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Notion-style blocks (editor/blocks.ts)                              */
+/* ------------------------------------------------------------------ */
+.fw-page ul.fw-task-list {
+  list-style: none;
+  padding-left: 4pt;
+  margin: 0 0 6pt;
+}
+
+.fw-page li.fw-task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.fw-page li.fw-task-item > label.fw-task-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+}
+
+.fw-page li.fw-task-item .fw-task-content {
+  flex: 1;
+}
+
+.fw-page li.fw-task-item input.fw-task-checkbox {
+  margin: 3px 0 0;
+  width: 14px;
+  height: 14px;
+  accent-color: #0067c0;
+  cursor: pointer;
+}
+
+.fw-page li.fw-task-item p {
+  margin: 0;
+}
+
+.fw-page li.fw-task-item[data-checked="true"] .fw-task-content,
+.fw-page li.fw-task-item[data-checked="true"] p {
+  color: #8a8a8a;
+  text-decoration: line-through;
+}
+
+.fw-page .fw-callout {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: #f1f1f0;
+  border-radius: 6px;
+  padding: 8pt 10pt;
+  margin: 0 0 6pt;
+}
+
+.fw-page .fw-callout-icon {
+  cursor: pointer;
+  user-select: none;
+  font-size: 1.1em;
+  line-height: 1.3;
+}
+
+.fw-page .fw-callout-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.fw-page .fw-callout-body p:last-child {
+  margin-bottom: 0;
+}
+
+.fw-page blockquote.fw-quote,
+.fw-page blockquote {
+  margin: 0 0 6pt;
+  padding-left: 12pt;
+  border-left: 3px solid #d3d3d3;
+  color: #37352f;
+  font-style: italic;
+}
+
+.fw-page hr.fw-divider {
+  border: none;
+  border-top: 1px solid #e0e0e0;
+  margin: 10pt 0;
+  height: 1px;
+}
+
+.fw-page pre.fw-codeblock {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 0.95em;
+  background: #f2f2f2;
+  border-radius: 4px;
+  padding: 6pt 8pt;
+  margin: 0 0 6pt;
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
+
+/* ------------------------------------------------------------------ */
+/* Slash menu / bubble toolbar / block handle                          */
+/* ------------------------------------------------------------------ */
+.slash-menu,
+.bubble-menu,
+.block-menu {
+  position: fixed;
+  z-index: 120;
+  background: #ffffff;
+  border: 1px solid #d3d3d3;
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.18);
+  user-select: none;
+}
+
+.slash-menu {
+  width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.slash-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.slash-item.active {
+  background: #eef4fb;
+}
+
+.slash-icon {
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #e3e3e3;
+  border-radius: 4px;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.slash-empty {
+  padding: 10px;
+  color: #999;
+  font-size: 12px;
+  text-align: center;
+}
+
+.bubble-menu {
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+}
+
+.bubble-btn {
+  min-width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  color: #1e1e1e;
+}
+
+.bubble-btn:hover {
+  background: #e8e8e8;
+}
+
+.bubble-btn.active {
+  background: #cfe4ff;
+}
+
+.block-handle {
+  position: fixed;
+  z-index: 110;
+  width: 22px;
+  height: 24px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  color: #9b9a97;
+  cursor: grab;
+  border-radius: 4px;
+  font-size: 12px;
+  letter-spacing: -1px;
+  user-select: none;
+}
+
+.block-handle:hover {
+  background: #efefef;
+  color: #37352f;
+}
+
+.block-menu {
+  padding: 6px;
+  min-width: 180px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.block-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: 4px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  color: #1e1e1e;
+}
+
+.block-menu-item:hover {
+  background: #eef4fb;
+}
+
+/* ------------------------------------------------------------------ */
+/* Status bar                                                          */
+/* ------------------------------------------------------------------ */
+#statusbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #ffffff;
+  border-top: 1px solid #d0d0d0;
+  padding: 2px 12px;
+  min-height: 24px;
+  color: #444;
+  font-size: 12px;
+  user-select: none;
+}
+
+#statusbar span {
+  min-width: 120px;
+}
+
+#statusbar .sb-center {
+  text-align: center;
+}
+
+#statusbar .sb-right {
+  text-align: right;
+}
+
+/* ------------------------------------------------------------------ */
+/* Page setup modal                                                    */
+/* ------------------------------------------------------------------ */
+.fw-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.fw-modal {
+  background: #ffffff;
+  border-radius: 6px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+  width: 380px;
+  padding: 16px;
+  font-size: 13px;
+}
+
+.fw-modal h2 {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.fw-modal .row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+
+.fw-modal label {
+  width: 90px;
+  flex-shrink: 0;
+}
+
+.fw-modal input,
+.fw-modal select {
+  flex: 1;
+  padding: 4px 6px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font: inherit;
+}
+
+.fw-modal .actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.fw-modal .actions button {
+  padding: 5px 16px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  background: #f5f5f5;
+  cursor: pointer;
+  font: inherit;
+}
+
+.fw-modal .actions button.primary {
+  background: #0067c0;
+  border-color: #0067c0;
+  color: #fff;
+}
+
+.fw-modal .actions button:hover {
+  filter: brightness(1.05);
+}
+
+/* ------------------------------------------------------------------ */
+/* Notion mode — continuous canvas, collapsed pages                    */
+/*                                                                     */
+/* The `page` nodes stay in the schema (exports unchanged); the CSS    */
+/* simply stops drawing them as paper, and the pagination engine is    */
+/* paused (see editor/pagination.ts setPaginationPaused).              */
+/* ------------------------------------------------------------------ */
+body.notion-mode #canvas {
+  background: var(--nw-canvas, #fbfbfa);
+  padding: 40px 24px 30vh;
+  align-items: stretch;
+}
+
+body.notion-mode .fw-page {
+  width: 100%;
+  max-width: 760px;
+  height: auto;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 0;
+  overflow: visible;
+  box-shadow: none;
+  background: transparent;
+  font-family:
+    ui-sans-serif,
+    -apple-system,
+    "Segoe UI",
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+  font-size: 16px;
+  line-height: 1.6;
+  color: var(--nw-text, #37352f);
+}
+
+/* Consecutive pages read as one flow: no paper gaps, no page breaks. */
+body.notion-mode .fw-page + .fw-page {
+  margin-top: 0;
+}
+
+body.notion-mode .fw-page p,
+body.notion-mode .fw-page h1,
+body.notion-mode .fw-page h2,
+body.notion-mode .fw-page h3 {
+  margin: 0;
+  line-height: 1.6;
+}
+
+body.notion-mode .fw-page h1 {
+  font-size: 1.875rem;
+  font-weight: 700;
+  margin-top: 1.2rem;
+}
+
+body.notion-mode .fw-page h2 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-top: 1rem;
+}
+
+body.notion-mode .fw-page h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-top: 0.8rem;
+}
+
+body.notion-mode .fw-pagebreak {
+  display: none;
+}
+
+/* The ribbon toolbar hides in Notion mode — the slash menu and the bubble
+ * toolbar carry editing. "View → Show Toolbar" pins it back. */
+body.notion-mode #toolbar {
+  display: none;
+}
+
+body.notion-mode.pinned-toolbar #toolbar {
+  display: flex;
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+
+body.notion-mode .tb-word-only {
+  display: none;
+}
+
+/* The page counter is meaningless on a pageless canvas; the word count stays. */
+body.notion-mode .sb-page {
+  display: none;
+}
+
+/* Selection + caret in Notion's softer tones. */
+body.notion-mode ::selection {
+  background: rgba(55, 53, 47, 0.16);
+}
+
+/* The block gutter sits in the page's left margin on wide windows. */
+body.notion-mode .block-handle {
+  z-index: 115;
+}
+
+/* ------------------------------------------------------------------ */
+/* Dark theme (body[data-theme="dark"])                                */
+/*                                                                     */
+/* Chrome surfaces flip; the Word-mode page stays a white sheet on the */
+/* dark canvas (a document on a desk), while Notion mode's pageless    */
+/* canvas is fully dark. Explicit user colours in content stay literal.*/
+/* ------------------------------------------------------------------ */
+body[data-theme="dark"] {
+  background: #191919;
+  color: #d4d4d4;
+}
+
+body[data-theme="dark"] #toolbar {
+  background: #202020;
+  border-bottom-color: #333;
+}
+
+body[data-theme="dark"] #toolbar button,
+body[data-theme="dark"] #toolbar select {
+  color: #d4d4d4;
+}
+
+body[data-theme="dark"] #toolbar button:hover,
+body[data-theme="dark"] #toolbar select:hover {
+  background: #2f2f2f;
+}
+
+body[data-theme="dark"] #toolbar button.active {
+  background: #1f3a55;
+  border-color: #3b6e9f;
+}
+
+body[data-theme="dark"] .tb-group {
+  border-right-color: #333;
+}
+
+body[data-theme="dark"] .tb-dropdown,
+body[data-theme="dark"] .slash-menu,
+body[data-theme="dark"] .bubble-menu,
+body[data-theme="dark"] .block-menu,
+body[data-theme="dark"] .fw-modal {
+  background: #262626;
+  border-color: #3a3a3a;
+  color: #d4d4d4;
+}
+
+body[data-theme="dark"] .slash-item.active,
+body[data-theme="dark"] .bubble-btn:hover,
+body[data-theme="dark"] .block-menu-item:hover {
+  background: #333;
+}
+
+body[data-theme="dark"] .bubble-btn.active {
+  background: #1f3a55;
+}
+
+body[data-theme="dark"] .block-handle:hover {
+  background: #333;
+  color: #d4d4d4;
+}
+
+body[data-theme="dark"] #canvas {
+  background: #111111;
+}
+
+body[data-theme="dark"] #statusbar {
+  background: #202020;
+  border-top-color: #333;
+  color: #9b9b9b;
+}
+
+/* Notion-mode content flips wholesale; Word mode keeps the white page. */
+body[data-theme="dark"].notion-mode .fw-page {
+  color: #d4d4d4;
+}
+
+body[data-theme="dark"].notion-mode .fw-page code {
+  background: #2d2d2d;
+}
+
+body[data-theme="dark"].notion-mode pre.fw-codeblock {
+  background: #2d2d2d;
+  color: #d4d4d4;
+}
+
+body[data-theme="dark"].notion-mode .fw-page .fw-callout {
+  background: #272727;
+}
+
+body[data-theme="dark"].notion-mode .fw-page blockquote,
+body[data-theme="dark"].notion-mode .fw-page blockquote.fw-quote {
+  color: #b8b8b8;
+  border-left-color: #444;
+}
+
+body[data-theme="dark"].notion-mode .fw-page hr.fw-divider {
+  border-top-color: #3a3a3a;
+}
+
+body[data-theme="dark"] ::selection {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* ------------------------------------------------------------------ */
+/* Workspace sidebar                                                   */
+/* ------------------------------------------------------------------ */
+#sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 260px;
+  z-index: 60;
+  display: none;
+  flex-direction: column;
+  background: #f7f6f3;
+  border-right: 1px solid #e4e2de;
+  user-select: none;
+  font-size: 13px;
+}
+
+body.sidebar-open #sidebar {
+  display: flex;
+}
+
+/* The document shifts over instead of hiding under the panel. */
+body.sidebar-open #canvas {
+  margin-left: 260px;
+}
+
+.side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 6px;
+}
+
+.side-title {
+  font-weight: 600;
+}
+
+.side-head-actions button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  width: 26px;
+  height: 26px;
+  font: inherit;
+}
+
+.side-head-actions button:hover {
+  background: #e8e6e3;
+}
+
+.side-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 6px;
+}
+
+.side-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  position: relative;
+}
+
+.side-row:hover {
+  background: #eae8e5;
+}
+
+.side-row.active {
+  background: #e2ddda;
+}
+
+.side-row .side-more {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  opacity: 0;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 0 4px;
+  font: inherit;
+}
+
+.side-row:hover .side-more {
+  opacity: 1;
+}
+
+.side-chevron {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  width: 16px;
+  padding: 0;
+  color: #9b9a97;
+  font: inherit;
+}
+
+.side-icon {
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.side-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.side-empty {
+  padding: 12px;
+  color: #9b9a97;
+}
+
+.side-row.drop-before {
+  box-shadow: inset 0 2px 0 #37352f;
+}
+
+.side-row.drop-after {
+  box-shadow: inset 0 -2px 0 #37352f;
+}
+
+.side-row.drop-child {
+  outline: 1px solid #37352f;
+  outline-offset: -1px;
+}
+
+.side-foot {
+  padding: 8px 12px;
+  border-top: 1px solid #e4e2de;
+}
+
+.side-foot button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 4px 6px;
+  color: #9b9a97;
+  font: inherit;
+}
+
+.side-foot button:hover {
+  background: #e8e6e3;
+  color: #37352f;
+}
+
+/* Quick switcher modal. */
+.quick-modal {
+  width: 460px;
+  padding: 10px;
+}
+
+.quick-modal input {
+  width: 100%;
+  border: none;
+  outline: none;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 15px;
+  border-radius: 6px;
+}
+
+.quick-list {
+  margin-top: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.quick-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: transparent;
+  border-radius: 5px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.quick-item.active {
+  background: #efedea;
+}
+
+.quick-empty {
+  padding: 10px;
+  color: #999;
+  font-size: 13px;
+  text-align: center;
+}
+
+/* Danger action in the confirm dialog (page delete). */
+.fw-modal .actions button.danger {
+  background: #d13438;
+  border-color: #d13438;
+  color: #fff;
+}
+
+/* Dark theme sidebar. */
+body[data-theme="dark"] #sidebar {
+  background: #202020;
+  border-right-color: #333;
+  color: #d4d4d4;
+}
+
+body[data-theme="dark"] .side-row:hover,
+body[data-theme="dark"] .side-foot button:hover,
+body[data-theme="dark"] .side-head-actions button:hover {
+  background: #2f2f2f;
+}
+
+body[data-theme="dark"] .side-row.active {
+  background: #333;
+}
+
+body[data-theme="dark"] .quick-item.active,
+body[data-theme="dark"] .quick-modal input {
+  background: #333;
+  color: #d4d4d4;
+}
+
+body[data-theme="dark"] .side-row.drop-before,
+body[data-theme="dark"] .side-row.drop-after {
+  box-shadow: inset 0 2px 0 #d4d4d4;
+}
+
+body[data-theme="dark"] .side-row.drop-child {
+  outline-color: #d4d4d4;
+}

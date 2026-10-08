@@ -248,9 +248,6 @@ they round-trip back through export.
   sees checkbox glyphs, shaded paragraphs and monospace runs rather than the
   rich nodes (they re-hydrate when FreeWord re-opens its own export).
 - The sidebar trash (`.trash/`) has no restore UI yet.
-- The toolbar's colour and highlight dropdowns are mouse-only (no Escape /
-  arrow-key handling yet; the slash and block menus are keyboard-driven); the
-  discard-changes prompt for file documents still uses a blocking native dialog.
 
 ## License
 

@@ -12,7 +12,7 @@ import { setZoom, zoomStep } from "./features/zoom";
 import { docxBufferToDoc } from "./io/import-docx";
 import { htmlToDoc, textToDoc } from "./io/import-other";
 import { docJson, toHtml, toText } from "./io/serialize";
-import { alertDialog, confirmModal, promptModal } from "./features/modal";
+import { alertDialog, confirmModal, promptModal, saveChangesModal } from "./features/modal";
 import { installLinkClicks } from "./features/links";
 import {
   beginPrintAppearance,
@@ -95,15 +95,37 @@ function isPageSource(): boolean {
   return currentPageId !== null;
 }
 
+/**
+ * Guard for every destructive document switch (new / open / switch page).
+ *
+ * A page source just flushes its autosave — editing a page *is* saving, so
+ * there is nothing to ask. A file source gets the Word-style Save / Don't
+ * save / Cancel modal: the old blocking `window.confirm` froze the renderer,
+ * matched nothing in the app's look, and forced a silent choice between
+ * losing the edit and losing the navigation.
+ *
+ * Resolves false when the switch must not proceed.
+ */
+async function confirmSwitch(action: string): Promise<boolean> {
+  if (!dirty) return true;
+  if (isPageSource()) {
+    await flushPageSave();
+    return true;
+  }
+  const choice = await saveChangesModal({
+    title: "Unsaved changes",
+    message: `Save changes to "${docName}" before ${action}?`,
+    saveLabel: currentPath ? "Save" : "Save As…",
+  });
+  if (choice === "cancel") return false;
+  if (choice === "save") return (await saveDoc()) === "saved";
+  return true;
+}
+
 async function openPage(id: string): Promise<void> {
   if (!editor || !fw) return;
   if (currentPageId === id) return;
-  if (dirty) {
-    const kept = isPageSource() ? await flushPageSave() : true;
-    if (!kept || (!isPageSource() && !window.confirm("Discard unsaved changes and open another page?"))) {
-      if (!isPageSource()) return;
-    }
-  }
+  if (!(await confirmSwitch("opening another page"))) return;
   const page = await fw.readPage(id).catch(() => null);
   if (!page) {
     await alertDialog(`Could not open the page "${id}" — it may have been deleted.`);
@@ -331,11 +353,7 @@ function openPageSetupModal(): void {
 
 async function newDoc(): Promise<void> {
   if (!editor) return;
-  if (dirty && isPageSource()) {
-    await flushPageSave();
-  } else if (dirty && !window.confirm("Discard unsaved changes and start a new document?")) {
-    return;
-  }
+  if (!(await confirmSwitch("starting a new document"))) return;
   editor.commands.setContent(INITIAL_DOC, { emitUpdate: false });
   currentPath = null;
   currentPageId = null;
@@ -355,12 +373,7 @@ async function newDoc(): Promise<void> {
 
 async function openFile(path?: string): Promise<void> {
   if (!editor || !fw) return;
-  if (dirty && isPageSource()) {
-    // The page autosaves — flush it, then the file takes over the editor.
-    await flushPageSave();
-  } else if (dirty && !window.confirm("Discard unsaved changes and open another document?")) {
-    return;
-  }
+  if (!(await confirmSwitch("opening another document"))) return;
   const res = await fw.openFile(path);
   if (!res) return;
   try {

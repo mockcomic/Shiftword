@@ -389,7 +389,11 @@ function makeParagraph(node: PMNode, listCtx: ListContext | null, extra?: Paragr
   const attrs = node.attrs ?? {};
   const alignment = typeof attrs.textAlign === "string" ? ALIGN_MAP[attrs.textAlign] : undefined;
   const lineSpacing = num(attrs.lineSpacing, 1);
-  const spacing: { line?: number; lineRule?: (typeof LineRuleType)[keyof typeof LineRuleType]; after?: number } = {};
+  const spacing: {
+    line?: number;
+    lineRule?: (typeof LineRuleType)[keyof typeof LineRuleType];
+    after?: number;
+  } = {};
   if (lineSpacing !== 1) {
     spacing.line = Math.round(240 * lineSpacing);
     spacing.lineRule = LineRuleType.AUTO;
@@ -459,11 +463,7 @@ function listItemToParagraphs(
   kids.forEach((child, k) => {
     const isLastChild = k === kids.length - 1;
     if (child.type === "paragraph" || child.type === "heading") {
-      const after = isLastChild
-        ? siblings.isLastItem
-          ? siblings.listBottomTwips
-          : 0
-        : MIDDLE_AFTER_TWIPS;
+      const after = isLastChild ? (siblings.isLastItem ? siblings.listBottomTwips : 0) : MIDDLE_AFTER_TWIPS;
       out.push(makeParagraph(child, ctx, { spacingAfterTwips: after }));
     } else if (child.type === "bulletList") {
       const subs = childrenOf(child).filter((c) => c.type === "listItem");

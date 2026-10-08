@@ -258,15 +258,52 @@ describe("menu commands", () => {
     expect(document.title).not.toContain("missing"); // title untouched
   });
 
-  it("file:new respects the discard confirmation", async () => {
+  it("file:new prompts Save / Don't save / Cancel without a native dialog", async () => {
     await send("insert:pageBreak");
-    confirmSpy().mockImplementation(() => false);
     await send("file:new");
+    await new Promise((r) => setTimeout(r, 10));
+    const modal = document.querySelector<HTMLElement>("#fw-save-changes");
+    expect(modal, "discard prompt is an in-app modal, not window.confirm").toBeTruthy();
+    expect(confirmSpy()).not.toHaveBeenCalled();
+
+    // Cancel: dismisses the prompt and keeps the document untouched.
+    modal!.querySelector<HTMLButtonElement>("#fw-save-changes-cancel")!.click();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(document.querySelector("#fw-save-changes")).toBeNull();
     expect(editorEl().querySelector(".fw-pagebreak")).toBeTruthy(); // kept
-    confirmSpy().mockImplementation(() => true);
+    expect(document.title).toMatch(/^● /);
+
+    // Don't save: proceeds and clears the document.
     await send("file:new");
+    await new Promise((r) => setTimeout(r, 10));
+    document.querySelector<HTMLButtonElement>("#fw-save-changes-discard")!.click();
+    await new Promise((r) => setTimeout(r, 10));
     expect(editorEl().querySelector(".fw-pagebreak")).toBeFalsy();
     expect(document.title).toBe("Untitled — FreeWord");
+  });
+
+  it("the discard prompt's Save button saves through the normal save path", async () => {
+    await send("insert:pageBreak");
+    fw.saveDoc.mockResolvedValue({ path: "C:\\docs\\Kept.docx" });
+    await send("file:new");
+    await new Promise((r) => setTimeout(r, 10));
+    document.querySelector<HTMLButtonElement>("#fw-save-changes-save")!.click();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fw.saveDoc).toHaveBeenCalled();
+    // The save cleared dirty, so newDoc ran without a second prompt.
+    expect(document.querySelector("#fw-save-changes")).toBeNull();
+    expect(editorEl().querySelector(".fw-pagebreak")).toBeFalsy();
+    expect(document.title).toBe("Untitled — FreeWord");
+  });
+
+  it("Escape on the discard prompt cancels the switch", async () => {
+    await send("insert:pageBreak");
+    await send("file:new");
+    await new Promise((r) => setTimeout(r, 10));
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(document.querySelector("#fw-save-changes")).toBeNull();
+    expect(editorEl().querySelector(".fw-pagebreak")).toBeTruthy(); // kept
   });
 
   it("insert:image measures and scales wide images down to 900px", async () => {
@@ -421,6 +458,35 @@ describe("toolbar state sync", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(editorEl().innerHTML).not.toMatch(/background-color|data-record-highlights|mark/i);
     expect(editorEl().textContent).toBe(""); // still the placeholder-only doc
+  });
+
+  it("dropdown menus are keyboard operable: arrows walk, Escape closes", async () => {
+    await boot();
+    const anchor = document.querySelector<HTMLElement>("#tb-color")!;
+    anchor.click();
+    await new Promise((r) => setTimeout(r, 10));
+    const menu = document.querySelector<HTMLElement>(".tb-dropdown")!;
+    expect(menu).toBeTruthy();
+    expect(anchor.getAttribute("aria-expanded")).toBe("true");
+    const btns = [...menu.querySelectorAll<HTMLElement>("button")]; // 10 swatches + Auto
+    // Opening focuses the first choice so the keyboard user can act immediately.
+    expect(document.activeElement).toBe(btns[0]);
+
+    // Arrow keys move the focus; Enter activates the focused choice (native
+    // button behaviour in Chromium, not modelled by jsdom clicks).
+    btns[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    expect(document.activeElement).toBe(btns[1]);
+    btns[1].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    expect(document.activeElement).toBe(btns[2]);
+    btns[2].dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    expect(document.activeElement).toBe(btns[btns.length - 1]);
+    btns[btns.length - 1].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    expect(document.activeElement).toBe(btns[0]); // wraps
+
+    // Escape dismisses the menu and returns focus to the toolbar button.
+    btns[0].dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(document.querySelector(".tb-dropdown")).toBeNull();
+    expect(anchor.hasAttribute("aria-expanded")).toBe(false);
   });
 
   it("table buttons follow the selection: enabled in a table, merge still off without cells", async () => {

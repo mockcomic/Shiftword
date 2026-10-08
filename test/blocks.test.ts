@@ -213,9 +213,7 @@ describe("task item Enter behavior", () => {
       }),
     );
     const $page = editor.state.doc.resolve(1);
-    editor.view.dispatch(
-      editor.state.tr.replaceWith($page.before(1) + 1, $page.after(1) - 1, node),
-    );
+    editor.view.dispatch(editor.state.tr.replaceWith($page.before(1) + 1, $page.after(1) - 1, node));
   }
 
   function pageChildren(): PM[] {

@@ -100,6 +100,8 @@ function removeOutsideHandler(): void {
 function closeMenus(): void {
   removeOutsideHandler();
   if (openMenu) {
+    const anchor = openMenu.dataset.menuFor ? document.getElementById(openMenu.dataset.menuFor) : null;
+    anchor?.removeAttribute("aria-expanded");
     openMenu.remove();
     openMenu = null;
   }
@@ -138,6 +140,63 @@ function toggleMenu(anchor: HTMLElement, build: (menu: HTMLElement) => void): vo
     if (!menu.contains(e.target as Node) && e.target !== anchor) closeMenus();
   };
   outsideDownHandler = onDown;
+  // Keyboard support: the dropdown opens with the first choice focused,
+  // arrows/Home/End walk the buttons, Escape closes and returns focus to the
+  // anchor. Previously these menus were mouse-only (no Escape / arrow keys).
+  menu.tabIndex = -1;
+  menu.setAttribute("role", "menu");
+  const items = () => [...menu.querySelectorAll<HTMLElement>("button")];
+  let activeIdx = -1;
+  const focusItem = (i: number): void => {
+    const list = items();
+    if (!list.length) return;
+    activeIdx = ((i % list.length) + list.length) % list.length;
+    list[activeIdx]?.focus();
+  };
+  menu.addEventListener("keydown", (e) => {
+    switch (e.key) {
+      case "Escape":
+        e.preventDefault();
+        e.stopPropagation();
+        closeMenus();
+        anchor.focus();
+        break;
+      case "ArrowDown":
+      case "ArrowRight":
+        e.preventDefault();
+        focusItem(activeIdx + 1);
+        break;
+      case "ArrowUp":
+      case "ArrowLeft":
+        e.preventDefault();
+        focusItem(activeIdx <= 0 ? items().length - 1 : activeIdx - 1);
+        break;
+      case "Home":
+        e.preventDefault();
+        focusItem(0);
+        break;
+      case "End":
+        e.preventDefault();
+        focusItem(items().length - 1);
+        break;
+      case "Tab":
+        e.preventDefault();
+        closeMenus();
+        anchor.focus();
+        break;
+    }
+  });
+  // Tabbing (or clicking elsewhere) the focus out of the menu dismisses it.
+  // Focus moving to the anchor is left alone: the anchor's own click handler
+  // performs the toggle-close, and closing here would make it reopen.
+  menu.addEventListener("focusout", (e) => {
+    const next = e.relatedTarget as Node | null;
+    if (next && !menu.contains(next) && next !== anchor) closeMenus();
+    if (!next) closeMenus();
+  });
+  anchor.setAttribute("aria-expanded", "true");
+  anchor.setAttribute("aria-haspopup", "true");
+  focusItem(0);
   // Deferred so the click that opened the menu does not also close it.
   window.setTimeout(() => {
     if (openMenu === menu && outsideDownHandler === onDown) {

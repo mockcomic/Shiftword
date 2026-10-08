@@ -162,7 +162,11 @@ describe("docx round-trip formatting (export → docx-preview → import)", () =
     expect(marked.marks?.some((m) => m.type === "highlight")).toBe(true);
 
     // And it must survive a second export (the colour arrives as rgb() form).
-    const docXml = strFromU8(unzipSync(new Uint8Array(await toDocxBuffer(back as unknown as Record<string, unknown>)))["word/document.xml"]);
+    const docXml = strFromU8(
+      unzipSync(new Uint8Array(await toDocxBuffer(back as unknown as Record<string, unknown>)))[
+        "word/document.xml"
+      ],
+    );
     expect(docXml).toContain('w:highlight w:val="yellow"');
   }, 30000);
 
@@ -209,7 +213,11 @@ describe("docx round-trip formatting (export → docx-preview → import)", () =
         content: [{ type: "paragraph", content: [{ type: "text", text: "quoted" }] }],
       },
       { type: "divider" },
-      { type: "fwCodeBlock", attrs: { language: "" }, content: [{ type: "text", text: "const a = 1;\nconst b = 2;" }] },
+      {
+        type: "fwCodeBlock",
+        attrs: { language: "" },
+        content: [{ type: "text", text: "const a = 1;\nconst b = 2;" }],
+      },
     ]);
     const back = (await docxBufferToDoc(await toDocxBuffer(json), schema)) as unknown as {
       content: PMJson[];

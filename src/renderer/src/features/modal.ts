@@ -144,6 +144,72 @@ export function alertDialog(message: string, title = "FreeWord"): Promise<void> 
 }
 
 /**
+ * The unsaved-changes prompt (Save / Don't save / Cancel), Word-style.
+ *
+ * Replaces the old blocking `window.confirm("Discard unsaved changes…")`:
+ * the native dialog froze the renderer (quit handshake included), could not
+ * be styled to match the app, and offered no way to keep the work without
+ * losing the operation the user was in the middle of.
+ */
+export function saveChangesModal(opts: {
+  title: string;
+  message: string;
+  saveLabel?: string;
+  discardLabel?: string;
+}): Promise<"save" | "discard" | "cancel"> {
+  const { title, message, saveLabel = "Save", discardLabel = "Don\u2019t save" } = opts;
+  return new Promise((resolve) => {
+    document.getElementById("fw-save-changes")?.remove();
+
+    const overlay = document.createElement("div");
+    overlay.id = "fw-save-changes";
+    overlay.className = "fw-modal-overlay";
+    overlay.innerHTML = `
+      <div class="fw-modal" role="alertdialog" aria-modal="true" aria-label="${title}">
+        <h2>${title}</h2>
+        <p class="fw-alert-message">${message}</p>
+        <div class="actions">
+          <button id="fw-save-changes-cancel" type="button">Cancel</button>
+          <button id="fw-save-changes-discard" type="button">${discardLabel}</button>
+          <button id="fw-save-changes-save" type="button" class="primary">${saveLabel}</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    let done = false;
+    const finish = (value: "save" | "discard" | "cancel"): void => {
+      if (done) return;
+      done = true;
+      document.removeEventListener("keydown", onKey, true);
+      overlay.remove();
+      resolve(value);
+    };
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        finish("cancel");
+      } else if (e.key === "Enter") {
+        // Enter picks the safe option: saving can never lose work.
+        e.preventDefault();
+        e.stopPropagation();
+        finish("save");
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) finish("cancel");
+    });
+    overlay.querySelector("#fw-save-changes-cancel")!.addEventListener("click", () => finish("cancel"));
+    overlay.querySelector("#fw-save-changes-discard")!.addEventListener("click", () => finish("discard"));
+    const ok = overlay.querySelector<HTMLButtonElement>("#fw-save-changes-save")!;
+    ok.addEventListener("click", () => finish("save"));
+    ok.focus();
+  });
+}
+
+/**
  * Yes/no without the blocking native dialog: resolves true on the primary
  * button, false on Escape / backdrop / the secondary button.
  */

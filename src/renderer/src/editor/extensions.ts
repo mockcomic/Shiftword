@@ -35,7 +35,15 @@ import { BlockHandle } from "../features/block-handle";
  * highlight (callout/code-block fills are paragraph-level and already
  * consumed by the block-signature pass before parsing).
  */
-const WHITEISH = new Set(["transparent", "inherit", "initial", "unset", "rgb(255,255,255)", "#fff", "#ffffff"]);
+const WHITEISH = new Set([
+  "transparent",
+  "inherit",
+  "initial",
+  "unset",
+  "rgb(255,255,255)",
+  "#fff",
+  "#ffffff",
+]);
 
 const ShadingAwareHighlight = Highlight.extend({
   parseHTML() {

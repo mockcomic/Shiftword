@@ -327,10 +327,67 @@ describe("menu commands", () => {
     await send("insert:image");
     const img = editorEl().querySelector("img");
     expect(img).toBeTruthy();
-    expect(img!.getAttribute("width")).toBe("900");
-    expect(img!.getAttribute("height")).toBe("600");
+    // The resizable node view sizes the element from the node's attrs, so the
+    // scale-to-900 path must reach the attrs — style is where the resizer
+    // applies them, and the attrs are what the .docx export consumes.
+    expect(img!.style.width).toBe("900px");
+    expect(img!.style.height).toBe("600px");
     expect(img!.getAttribute("alt")).toBe("photo.png");
+    fw.saveDoc.mockResolvedValue({ path: "C:\\docs\\img.docx" });
+    await send("file:save");
+    const payload = fw.saveDoc.mock.calls[0][0];
+    const json = JSON.stringify(payload.json);
+    expect(json).toMatch(/"width":900/);
+    expect(json).toMatch(/"height":600/);
+    // The corner drag handles are in the DOM (revealed on hover by CSS).
+    expect(editorEl().querySelectorAll("[data-resize-handle]").length).toBe(4);
     vi.unstubAllGlobals();
+  });
+
+  it("dragging a corner handle resizes the image and persists the new size", async () => {
+    fw.pickImage.mockResolvedValue({ dataUrl: `data:image/png;base64,${PNG_1x1}`, name: "small.png" });
+    class FakeImg {
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      naturalWidth = 400;
+      naturalHeight = 200; // aspect ratio 2:1
+      set src(_v: string) {
+        setTimeout(() => this.onload?.(), 0);
+      }
+    }
+    vi.stubGlobal("Image", FakeImg);
+    await send("insert:image");
+    const img = editorEl().querySelector("img")!;
+    expect(img.style.width).toBe("400px"); // under the 900 cap, kept as-is
+
+    // jsdom reports 0 for offsetWidth; the resizer reads it to measure the
+    // drag. Serve it from the inline style the resizer itself writes.
+    Object.defineProperties(HTMLElement.prototype, {
+      offsetWidth: { configurable: true, get: () => parseFloat(img.style.width) || 0 },
+      offsetHeight: { configurable: true, get: () => parseFloat(img.style.height) || 0 },
+    });
+    try {
+      const handle = editorEl().querySelector<HTMLElement>('[data-resize-handle="bottom-right"]')!;
+      expect(handle).toBeTruthy();
+      handle.dispatchEvent(new MouseEvent("mousedown", { clientX: 100, clientY: 100, bubbles: true }));
+      document.dispatchEvent(new MouseEvent("mousemove", { clientX: 160, clientY: 100, bubbles: true }));
+      document.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 20));
+
+      // +60px width, aspect ratio preserved (2:1 → 460×230).
+      expect(img.style.width).toBe("460px");
+      expect(img.style.height).toBe("230px");
+      // And the commit reached the document, not just the live element:
+      fw.saveDoc.mockResolvedValue({ path: "C:\\docs\\resized.docx" });
+      await send("file:save");
+      const json = JSON.stringify(fw.saveDoc.mock.calls[0][0].json);
+      expect(json).toMatch(/"width":460/);
+      expect(json).toMatch(/"height":230/);
+    } finally {
+      vi.unstubAllGlobals();
+      delete (HTMLElement.prototype as { offsetWidth?: unknown }).offsetWidth;
+      delete (HTMLElement.prototype as { offsetHeight?: unknown }).offsetHeight;
+    }
   });
 
   it("view:zoomIn raises zoom (status bar + select)", async () => {

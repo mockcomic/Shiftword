@@ -355,6 +355,7 @@ function setPrintMode(on: boolean): void {
     ".fw-doc { zoom: 1 !important; }",
     ".fw-page { margin: 0 !important; box-shadow: none !important; break-after: page; page-break-after: always; }",
     ".fw-page:last-child { break-after: auto; page-break-after: auto; }",
+    "[data-resize-handle] { display: none !important; }",
     "* { print-color-adjust: exact; -webkit-print-color-adjust: exact; }",
   ].join("\n");
 }

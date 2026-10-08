@@ -310,6 +310,57 @@ body {
   outline: 2px solid #7ab0e8;
 }
 
+/* Image resize handles (tiptap ResizableNodeView). Hidden until the image is
+   hovered or actively being dragged — a page of permanent squares reads as
+   noise; the corners reveal themselves where the user is already looking. */
+.fw-page [data-resize-container] {
+  max-width: 100%;
+}
+
+.fw-page [data-resize-wrapper] {
+  max-width: 100%;
+}
+
+.fw-page [data-resize-handle] {
+  width: 9px;
+  height: 9px;
+  background: #fff;
+  border: 1.5px solid #37352f;
+  border-radius: 2px;
+  display: none;
+  z-index: 5;
+}
+
+.fw-page [data-resize-container]:hover [data-resize-handle],
+.fw-page [data-resize-container][data-resize-state="true"] [data-resize-handle] {
+  display: block;
+}
+
+.fw-page [data-resize-handle="top-left"] {
+  transform: translate(-50%, -50%);
+  cursor: nwse-resize;
+}
+
+.fw-page [data-resize-handle="top-right"] {
+  transform: translate(50%, -50%);
+  cursor: nesw-resize;
+}
+
+.fw-page [data-resize-handle="bottom-left"] {
+  transform: translate(-50%, 50%);
+  cursor: nesw-resize;
+}
+
+.fw-page [data-resize-handle="bottom-right"] {
+  transform: translate(50%, 50%);
+  cursor: nwse-resize;
+}
+
+body[data-theme="dark"] .fw-page [data-resize-handle] {
+  background: #202020;
+  border-color: #d4d4d4;
+}
+
 /* Inline code (the `code` mark) — Word's "monospace over the text". */
 .fw-page code {
   font-family: Consolas, "Courier New", monospace;

@@ -140,7 +140,21 @@ export function createExtensions() {
     Cursors,
     // Images: allow data: URLs so images survive .docx round-trips (both
     // docx-preview output and user-inserted images are base64-embedded).
-    Image.configure({ allowBase64: true, inline: false }),
+    // The stock ResizableNodeView adds corner drag handles; the commit lands
+    // in the node's width/height attrs (the same fields the .docx exporter
+    // reads), so resize survives save/reload/export without custom plumbing.
+    // Aspect ratio is always kept — dragging a photo corner out of shape is
+    // never what the user meant.
+    Image.configure({
+      allowBase64: true,
+      inline: false,
+      resize: {
+        enabled: true,
+        minWidth: 40,
+        minHeight: 40,
+        alwaysPreserveAspectRatio: true,
+      },
+    }),
     History,
     Placeholder.configure({
       placeholder: "Write, or press '/' for commands…",

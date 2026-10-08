@@ -31,7 +31,9 @@ stay on your machine.
   (drag across cells to select them). Tables survive DOCX round-trips, including
   the widths you set and the merges you made.
 - **Images**: insert PNG / JPEG / GIF / BMP images (≤ 10 MB) at the cursor;
-  images are embedded in the document and exported to DOCX with their size preserved.
+  images are embedded in the document and exported to DOCX with their size
+  preserved. **Hover an image and drag a corner to resize it** (aspect ratio
+  is kept; the size lands in the document and survives .docx round-trips).
 - **Paged document**: true page model (A4 or Letter, adjustable margins via
   View → Page Setup), live pagination in the editor, page breaks (Ctrl+Enter),
   page & word count
@@ -239,7 +241,6 @@ they round-trip back through export.
 
 - Legacy `.doc` (pre-2007) files are not supported — save them as `.docx` first.
 - WebP images are not supported (use PNG / JPEG / GIF / BMP).
-- Images cannot be resized interactively (they keep their inserted size).
 - A single block taller than one page (e.g. a very large table) is kept whole
   and may extend past the page in PDF export.
 - Track changes, comments, headers/footers, footnotes, and find & replace

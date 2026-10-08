@@ -17,6 +17,9 @@ interface FwMock {
   print: ReturnType<typeof vi.fn>;
   getRecent: ReturnType<typeof vi.fn>;
   openExternal: ReturnType<typeof vi.fn>;
+  listTrash: ReturnType<typeof vi.fn>;
+  restoreTrash: ReturnType<typeof vi.fn>;
+  deleteTrash: ReturnType<typeof vi.fn>;
   onCommand: ReturnType<typeof vi.fn>;
   sendQuitResponse: ReturnType<typeof vi.fn>;
   onWillQuit: ReturnType<typeof vi.fn>;
@@ -58,6 +61,9 @@ function makeFw(): FwMock {
     exportPdf: vi.fn().mockResolvedValue(null),
     print: vi.fn().mockResolvedValue(undefined),
     getRecent: vi.fn().mockResolvedValue([]),
+    listTrash: vi.fn().mockResolvedValue([]),
+    restoreTrash: vi.fn().mockResolvedValue({}),
+    deleteTrash: vi.fn().mockResolvedValue({}),
     onCommand: vi.fn((cb: Cb) => {
       commandCb = cb as never;
       return () => {};

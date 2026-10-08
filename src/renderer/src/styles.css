@@ -1028,6 +1028,70 @@ body.sidebar-open #canvas {
   color: #37352f;
 }
 
+/* Trash section (deleted pages with restore). */
+.side-trash {
+  max-height: 32%;
+  overflow-y: auto;
+  padding: 2px 6px 6px;
+  border-top: 1px dashed #e4e2de;
+}
+
+.side-trash-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 6px 2px;
+  color: #9b9a97;
+  font-size: 12px;
+}
+
+.side-trash-head button,
+.side-trash-restore,
+.side-trash-delete {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 6px;
+  color: #9b9a97;
+  font: inherit;
+  font-size: 12px;
+}
+
+.side-trash-head button:hover,
+.side-trash-restore:hover {
+  background: #e8e6e3;
+  color: #37352f;
+}
+
+.side-trash-delete:hover {
+  background: #fbe4e4;
+  color: #d13438;
+}
+
+.side-trash-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.side-trash-row:hover {
+  background: #f2f0ed;
+}
+
+.side-trash-row .side-label {
+  flex: 1;
+  min-width: 0;
+  color: #787774;
+}
+
+.side-trash-delete {
+  margin-left: auto;
+  font-size: 14px;
+}
+
 /* Quick switcher modal. */
 .quick-modal {
   width: 460px;
@@ -1094,6 +1158,26 @@ body[data-theme="dark"] .side-row:hover,
 body[data-theme="dark"] .side-foot button:hover,
 body[data-theme="dark"] .side-head-actions button:hover {
   background: #2f2f2f;
+}
+
+body[data-theme="dark"] .side-trash {
+  border-top-color: #333;
+}
+
+body[data-theme="dark"] .side-trash-row:hover,
+body[data-theme="dark"] .side-trash-head button:hover,
+body[data-theme="dark"] .side-trash-restore:hover {
+  background: #2f2f2f;
+  color: #d4d4d4;
+}
+
+body[data-theme="dark"] .side-trash-row .side-label {
+  color: #a0a0a0;
+}
+
+body[data-theme="dark"] .side-trash-delete:hover {
+  background: #4a2528;
+  color: #ff7b81;
 }
 
 body[data-theme="dark"] .side-row.active {

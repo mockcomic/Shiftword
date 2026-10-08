@@ -8,7 +8,18 @@ import { safeExternalUrl } from "../shared/urls";
 import { toDocxBuffer } from "./docx-export";
 import { readRecent, upsertRecent } from "./recent";
 import { readSettings, setSettings as writeSettings } from "./settings";
-import { createPage, deletePage, listPages, movePage, readPage, renamePage, writePage } from "./workspace";
+import {
+  createPage,
+  deletePage,
+  deleteTrash,
+  listPages,
+  listTrash,
+  movePage,
+  readPage,
+  renamePage,
+  restoreTrash,
+  writePage,
+} from "./workspace";
 
 type GetWindow = () => BrowserWindow | null;
 
@@ -382,5 +393,17 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
   ipcMain.handle("page:delete", async (event, id: unknown) => {
     if (!trustedSender(event, getWindow) || typeof id !== "string") return { error: "Untrusted sender." };
     return deletePage(id);
+  });
+  ipcMain.handle("page:trashList", async (event) => {
+    if (!trustedSender(event, getWindow)) return [];
+    return listTrash();
+  });
+  ipcMain.handle("page:trashRestore", async (event, file: unknown) => {
+    if (!trustedSender(event, getWindow) || typeof file !== "string") return { error: "Untrusted sender." };
+    return restoreTrash(file);
+  });
+  ipcMain.handle("page:trashDelete", async (event, file: unknown) => {
+    if (!trustedSender(event, getWindow) || typeof file !== "string") return { error: "Untrusted sender." };
+    return deleteTrash(file);
   });
 }

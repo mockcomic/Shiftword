@@ -1,4 +1,4 @@
-import type { PageMeta } from "../../../shared/types";
+import type { PageMeta, TrashEntry } from "../../../shared/types";
 
 /**
  * The workspace sidebar: a local page tree in the left gutter, Notion-style.
@@ -6,6 +6,9 @@ import type { PageMeta } from "../../../shared/types";
  * Vanilla DOM in the repo's house style (see toolbar.ts's dropdown pattern):
  * one delegated listener set, full re-render on data change (the tree is
  * tens of rows — virtualisation would be the bug, not the optimisation).
+ *
+ * A collapsible Trash section under the tree lists deleted pages with
+ * Restore / Delete-forever actions, so the `.trash/` store is not a dead end.
  *
  * The element itself is created here and appended to <body>; visibility is
  * CSS (`body.sidebar-open #sidebar`), driven by the persisted setting.
@@ -19,16 +22,35 @@ export interface SidebarHandlers {
   onDelete(id: string): void;
   onMove(id: string, parentId: string | null, order: number): void;
   onQuickSwitcher(): void;
+  onRestoreTrash(file: string): void;
+  onDeleteTrash(file: string): void;
+  onEmptyTrash(): void;
 }
 
 export interface Sidebar {
-  refresh(pages: PageMeta[]): void;
+  refresh(pages: PageMeta[], trash?: TrashEntry[]): void;
   setActive(id: string | null): void;
   element: HTMLElement;
 }
 
+/** Compact date for trash rows: today / yesterday / a short absolute date. */
+function formatDeleted(deletedAt: number): string {
+  if (!Number.isFinite(deletedAt) || deletedAt <= 0) return "";
+  const d = new Date(deletedAt);
+  const today = new Date();
+  const sameDay = (a: Date, b: Date): boolean =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (sameDay(d, today)) return "today";
+  const yest = new Date(today);
+  yest.setDate(today.getDate() - 1);
+  if (sameDay(d, yest)) return "yesterday";
+  return d.toLocaleDateString();
+}
+
 export function createSidebar(handlers: SidebarHandlers): Sidebar {
   let pages: PageMeta[] = [];
+  let trash: TrashEntry[] = [];
+  let trashOpen = false;
   let activeId: string | null = null;
   const expanded = new Set<string>();
 
@@ -43,17 +65,78 @@ export function createSidebar(handlers: SidebarHandlers): Sidebar {
       </span>
     </div>
     <div class="side-tree" id="side-tree"></div>
+    <div class="side-trash" id="side-trash" hidden></div>
     <div class="side-foot">
       <button type="button" id="side-new-root">＋ New page</button>
+      <button type="button" id="side-trash-toggle" title="Show deleted pages">🗑 Trash</button>
     </div>
   `;
   document.body.appendChild(root);
 
   const tree = root.querySelector<HTMLElement>("#side-tree")!;
+  const trashBox = root.querySelector<HTMLElement>("#side-trash")!;
 
   root.querySelector("#side-new")!.addEventListener("click", () => handlers.onNewPage(null));
   root.querySelector("#side-new-root")!.addEventListener("click", () => handlers.onNewPage(null));
   root.querySelector("#side-search")!.addEventListener("click", () => handlers.onQuickSwitcher());
+  root.querySelector("#side-trash-toggle")!.addEventListener("click", () => {
+    trashOpen = !trashOpen;
+    renderTrash();
+  });
+
+  function renderTrash(): void {
+    const toggle = root.querySelector<HTMLButtonElement>("#side-trash-toggle")!;
+    toggle.textContent = trashOpen ? "🗑 Trash ▾" : "🗑 Trash ▸";
+    toggle.setAttribute("aria-expanded", String(trashOpen));
+    trashBox.hidden = !trashOpen;
+    if (!trashOpen) return;
+    trashBox.replaceChildren();
+    if (trash.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "side-empty";
+      empty.textContent = "Trash is empty.";
+      trashBox.appendChild(empty);
+      return;
+    }
+    const head = document.createElement("div");
+    head.className = "side-trash-head";
+    const count = document.createElement("span");
+    count.textContent = `${trash.length} deleted`;
+    const emptyBtn = document.createElement("button");
+    emptyBtn.type = "button";
+    emptyBtn.className = "side-trash-empty-all";
+    emptyBtn.textContent = "Empty trash";
+    emptyBtn.title = "Permanently delete every item";
+    emptyBtn.addEventListener("click", () => handlers.onEmptyTrash());
+    head.append(count, emptyBtn);
+    trashBox.appendChild(head);
+    for (const entry of trash) {
+      const row = document.createElement("div");
+      row.className = "side-trash-row";
+      const icon = document.createElement("span");
+      icon.className = "side-icon";
+      icon.textContent = entry.icon || "📄";
+      const label = document.createElement("span");
+      label.className = "side-label";
+      const when = formatDeleted(entry.deletedAt);
+      label.textContent = when ? `${entry.title} · ${when}` : entry.title;
+      label.title = label.textContent;
+      const restore = document.createElement("button");
+      restore.type = "button";
+      restore.className = "side-trash-restore";
+      restore.textContent = "↩ Restore";
+      restore.title = "Put this page back in the tree";
+      restore.addEventListener("click", () => handlers.onRestoreTrash(entry.file));
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "side-trash-delete";
+      del.textContent = "×";
+      del.title = "Delete forever";
+      del.addEventListener("click", () => handlers.onDeleteTrash(entry.file));
+      row.append(icon, label, restore, del);
+      trashBox.appendChild(row);
+    }
+  }
 
   // Drop onto the empty space below the tree = move to root, end of list.
   tree.addEventListener("dragover", (e) => {
@@ -258,13 +341,15 @@ export function createSidebar(handlers: SidebarHandlers): Sidebar {
 
   return {
     element: root,
-    refresh(newPages) {
+    refresh(newPages, newTrash) {
       pages = newPages.slice();
+      if (newTrash) trash = newTrash.slice();
       // Expand anything that has a parent chain so a fresh workspace reads as
       // a list, not a puzzle.
       for (const p of pages)
         if (hasChildren(p.id) && expanded.size === 0 && p.parentId === null) expanded.add(p.id);
       rerender();
+      renderTrash();
     },
     setActive(id) {
       activeId = id;

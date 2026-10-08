@@ -20,6 +20,7 @@ interface Stored {
 }
 
 let store = new Map<string, Stored>();
+let trashStore = new Map<string, Stored & { file: string; deletedAt: number }>();
 let nextId = 1;
 
 (Range as unknown as { prototype: Record<string, unknown> }).prototype.getClientRects = () =>
@@ -46,6 +47,7 @@ let saveThenQuitCb: (() => void) | null;
 async function boot(): Promise<void> {
   vi.resetModules();
   store = new Map();
+  trashStore = new Map();
   nextId = 1;
   document.body.innerHTML = `
     <div id="toolbar"></div>
@@ -97,7 +99,36 @@ async function boot(): Promise<void> {
       return {};
     }),
     deletePage: vi.fn(async (id: string) => {
+      const s = store.get(id);
       store.delete(id);
+      if (s) {
+        const file = `${id}-t${nextId++}.json`;
+        trashStore.set(file, { ...s, file, deletedAt: Date.now() });
+      }
+      return {};
+    }),
+    listTrash: vi.fn(async () =>
+      [...trashStore.values()]
+        .map((t) => ({
+          file: t.file,
+          id: t.meta.id,
+          title: t.meta.title,
+          icon: t.meta.icon,
+          parentId: t.meta.parentId,
+          updatedAt: t.meta.updatedAt,
+          deletedAt: t.deletedAt,
+        }))
+        .sort((a, b) => b.deletedAt - a.deletedAt),
+    ),
+    restoreTrash: vi.fn(async (file: string) => {
+      const t = trashStore.get(file);
+      if (!t) return { error: "Unknown trash entry." };
+      trashStore.delete(file);
+      store.set(t.meta.id, { meta: t.meta, json: t.json });
+      return { meta: t.meta };
+    }),
+    deleteTrash: vi.fn(async (file: string) => {
+      trashStore.delete(file);
       return {};
     }),
     onCommand: vi.fn((cb: (cmd: { id: string; path?: string }) => void) => {
@@ -268,5 +299,72 @@ describe("workspace pages", () => {
     ok.click();
     await tick(50);
     expect(document.title).toContain("Untitled");
+  });
+
+  it("the sidebar trash lists deleted pages and restores them", async () => {
+    const s = makeStored("Rescuable");
+    store.set(s.meta.id, s);
+    commandCb!({ id: "page:open", path: s.meta.id });
+    await tick(50);
+    // Delete via the row menu + confirm.
+    document.querySelector<HTMLButtonElement>("#sidebar .side-more")!.click();
+    await tick(20);
+    Array.from(document.querySelectorAll<HTMLButtonElement>(".block-menu-item"))
+      .find((b) => b.textContent?.includes("Delete"))!
+      .click();
+    await tick(20);
+    document.querySelector<HTMLButtonElement>("#fw-confirm-ok")!.click();
+    await tick(50);
+
+    // Open the trash section and check the entry reads by title.
+    const toggle = document.getElementById("side-trash-toggle") as HTMLButtonElement;
+    toggle.click();
+    await tick(20);
+    const trashRows = [...document.querySelectorAll<HTMLElement>(".side-trash-row")];
+    expect(trashRows).toHaveLength(1);
+    expect(trashRows[0].textContent).toContain("Rescuable");
+
+    // Restore puts it back in the tree and out of the trash.
+    trashRows[0].querySelector<HTMLButtonElement>(".side-trash-restore")!.click();
+    await tick(50);
+    expect(document.querySelectorAll(".side-trash-row")).toHaveLength(0);
+    const treeText = [...document.querySelectorAll("#side-tree .side-row")].map((r) => r.textContent);
+    expect(treeText.some((t) => t?.includes("Rescuable"))).toBe(true);
+    expect(store.has(s.meta.id)).toBe(true);
+  });
+
+  it("deleting forever and emptying trash erase entries after a confirm", async () => {
+    const a = makeStored("Gone-a");
+    const b = makeStored("Gone-b");
+    store.set(a.meta.id, a);
+    store.set(b.meta.id, b);
+    commandCb!({ id: "page:open", path: a.meta.id });
+    await tick(50);
+    // Delete both through the bridge the way the row menu does.
+    await fw.deletePage(a.meta.id);
+    await fw.deletePage(b.meta.id);
+    commandCb!({ id: "view:quickSwitcher" }); // triggers a reloadPages()
+    document.getElementById("fw-quick-switcher")?.remove();
+    await tick(30);
+    (document.getElementById("side-trash-toggle") as HTMLButtonElement).click();
+    await tick(20);
+    expect(document.querySelectorAll(".side-trash-row")).toHaveLength(2);
+
+    // Single permanent delete asks first, then erases only that entry.
+    document.querySelectorAll<HTMLButtonElement>(".side-trash-delete")[0].click();
+    await tick(20);
+    const confirm = document.getElementById("fw-confirm");
+    expect(confirm, "permanent delete asks for confirmation").toBeTruthy();
+    document.querySelector<HTMLButtonElement>("#fw-confirm-ok")!.click();
+    await tick(50);
+    expect(document.querySelectorAll(".side-trash-row")).toHaveLength(1);
+
+    // Empty trash clears the rest.
+    document.querySelector<HTMLButtonElement>(".side-trash-empty-all")!.click();
+    await tick(20);
+    document.querySelector<HTMLButtonElement>("#fw-confirm-ok")!.click();
+    await tick(50);
+    expect(document.querySelectorAll(".side-trash-row")).toHaveLength(0);
+    expect(trashStore.size).toBe(0);
   });
 });

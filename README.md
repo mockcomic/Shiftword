@@ -13,7 +13,8 @@ stay on your machine.
   - **Block handle** — ⋮⋮ on hover: turn into, duplicate, delete, move, drag to reorder
   - **Workspace sidebar** — a local page tree with nesting, drag-to-reparent,
     emoji icons, and **Ctrl+K quick switcher**; pages **autosave** (debounced) to
-    `userData/workspace/`, no Ctrl+S needed
+    `userData/workspace/`, no Ctrl+S needed; deleted pages land in a sidebar
+    **Trash** section with Restore / Delete-forever / Empty-trash actions
   - **Dark theme** (View → Theme → Light / Dark / Follow system), persisted
 - **Rich text editing**: bold / italic / underline / strikethrough, text color,
   yellow & green highlighting, inline code (monospace), hyperlinks,
@@ -85,7 +86,8 @@ schema stays `doc → page → blocks` either way:
 - Workspace pages live in `userData/workspace/`: `pages.json` (metadata:
   id / title / icon / parentId / order) plus one `<id>.json` per page holding
   the same document JSON the .docx exporter consumes. Deleting a page moves its
-  file to `workspace/.trash/`. Page edits autosave 600 ms after the last
+  file to `workspace/.trash/`, where the sidebar Trash section offers Restore /
+  Delete-forever. Page edits autosave 600 ms after the last
   keystroke; the quit handshake flushes before answering, and Ctrl+S is an
   immediate flush.
 - To-do / callout / quote / divider / code-block round-trip through .docx via
@@ -247,7 +249,6 @@ they round-trip back through export.
 - To-do / callout / code-block fidelity in `.docx` is best-effort: Word itself
   sees checkbox glyphs, shaded paragraphs and monospace runs rather than the
   rich nodes (they re-hydrate when FreeWord re-opens its own export).
-- The sidebar trash (`.trash/`) has no restore UI yet.
 
 ## License
 

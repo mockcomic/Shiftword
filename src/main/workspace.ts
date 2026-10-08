@@ -1,8 +1,8 @@
 import { app } from "electron";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import type { PageMeta, WorkspacePage } from "../shared/types";
+import type { PageMeta, TrashEntry, WorkspacePage } from "../shared/types";
 import { MAX_PAGE_JSON_BYTES } from "../shared/types";
 
 /**
@@ -10,15 +10,20 @@ import { MAX_PAGE_JSON_BYTES } from "../shared/types";
  *
  * Layout — `pages.json` holds the metadata array; every page's document JSON
  * is its own `<id>.json` file (the same shape `docx-export` consumes, so the
- * .docx pipeline needs no knowledge of pages at all). Deleting a page renames
- * its file into `.trash/` — recovery stays possible on disk even though the
- * v1 UI does not surface it.
+ * .docx pipeline needs no knowledge of pages at all). Deleting a page moves
+ * its file into `.trash/` wrapped with its metadata so the UI can offer
+ * restore; `listTrash` / `restoreTrash` / `deleteTrash` surface that.
  *
  * Same best-effort posture as recent.ts: a corrupt store must degrade to an
  * empty workspace, never break open/save or the quit handshake.
  */
 
 const SAFE_ID = /^[A-Za-z0-9_-]{4,64}$/;
+/** Trash entries are keyed by their file name (`<id>-<ts36>.json`). */
+const SAFE_TRASH_FILE = /^[A-Za-z0-9_-]{4,140}\.json$/;
+
+/** How many trash entries the sidebar ever needs — older ones can be emptied on disk. */
+const MAX_TRASH_ENTRIES = 200;
 
 function workspaceDir(): string {
   return path.join(app.getPath("userData"), "workspace");
@@ -28,6 +33,14 @@ function metaFile(): string {
 }
 function docFile(id: string): string {
   return path.join(workspaceDir(), `${id}.json`);
+}
+function trashDir(): string {
+  return path.join(workspaceDir(), ".trash");
+}
+
+/** A short, user-presentable description of a caught error. */
+function messageOf(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** Ids reach us over IPC from the renderer — they must never steer a path. */
@@ -218,15 +231,33 @@ export async function deletePage(id: string): Promise<{ error?: string }> {
     }
   }
 
-  const trashDir = path.join(workspaceDir(), ".trash");
+  const trash = trashDir();
   try {
-    await mkdir(trashDir, { recursive: true });
+    await mkdir(trash, { recursive: true });
     for (const d of doomed) {
       const file = docFile(d);
-      if (existsSync(file)) {
-        await rename(file, path.join(trashDir, `${d}-${Date.now().toString(36)}.json`)).catch(
-          () => undefined,
-        );
+      if (!existsSync(file)) continue;
+      const trashName = `${d}-${Date.now().toString(36)}.json`;
+      try {
+        // Wrap the doc with its metadata so the trash UI can show a title
+        // and restore re-adopts the page unchanged.
+        const raw = await readFile(file, "utf8");
+        let json: unknown;
+        try {
+          json = JSON.parse(raw);
+        } catch {
+          json = initialDoc();
+        }
+        const payload = {
+          deletedAt: Date.now(),
+          meta: store.pages.find((p) => p.id === d)!,
+          json,
+        };
+        await writeFile(path.join(trash, trashName), JSON.stringify(payload), "utf8");
+        await rm(file);
+      } catch {
+        // Fallback to the plain move: the bytes stay recoverable by hand.
+        await rename(file, path.join(trash, trashName)).catch(() => undefined);
       }
     }
     store.pages = store.pages.filter((p) => !doomed.has(p.id));
@@ -234,5 +265,120 @@ export async function deletePage(id: string): Promise<{ error?: string }> {
     return {};
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/* --- trash (restore UI for deleted pages) ----------------------------------
+ *
+ * A trash file is either `{ deletedAt, meta, json }` (current format) or the
+ * bare doc JSON (entries made before the restore UI existed). The file name
+ * `<id>-<ts36>.json` doubles as the unique key across restore/delete calls,
+ * because the same id can end up in the trash more than once.
+ */
+
+function idFromTrashName(name: string): string {
+  const base = name.replace(/\.json$/, "");
+  const cut = base.lastIndexOf("-");
+  return cut > 0 ? base.slice(0, cut) : base;
+}
+
+function deletedAtFromTrashName(name: string): number {
+  const base = name.replace(/\.json$/, "");
+  const cut = base.lastIndexOf("-");
+  const ts = cut > 0 ? Number.parseInt(base.slice(cut + 1), 36) : NaN;
+  return Number.isFinite(ts) ? ts : 0;
+}
+
+interface TrashPayload {
+  deletedAt?: number;
+  meta?: PageMeta;
+  json?: unknown;
+}
+
+function toEntry(name: string, data: TrashPayload | null): TrashEntry {
+  const meta = data?.meta && validMeta(data.meta) ? data.meta : null;
+  return {
+    file: name,
+    id: meta?.id ?? idFromTrashName(name),
+    title: meta?.title || "Untitled",
+    icon: meta?.icon || "📄",
+    parentId: meta?.parentId ?? null,
+    updatedAt: meta?.updatedAt ?? 0,
+    deletedAt: data?.deletedAt ?? deletedAtFromTrashName(name),
+  };
+}
+
+async function readTrashPayload(fileName: string): Promise<TrashPayload | null> {
+  try {
+    const raw = await readFile(path.join(trashDir(), fileName), "utf8");
+    const data: unknown = JSON.parse(raw);
+    return data && typeof data === "object" ? (data as TrashPayload) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Deleted pages, newest first — unreadable files are skipped, not fatal. */
+export async function listTrash(): Promise<TrashEntry[]> {
+  let names: string[];
+  try {
+    names = (await readdir(trashDir())).filter((n) => SAFE_TRASH_FILE.test(n));
+  } catch {
+    return []; // no trash yet
+  }
+  const entries: TrashEntry[] = [];
+  for (const name of names.slice(0, MAX_TRASH_ENTRIES)) {
+    entries.push(toEntry(name, await readTrashPayload(name)));
+  }
+  return entries.sort((a, b) => b.deletedAt - a.deletedAt);
+}
+
+/** Put a trashed page back. Unknown parents re-attach to the root, not vanish. */
+export async function restoreTrash(fileName: string): Promise<{ meta?: PageMeta; error?: string }> {
+  if (!SAFE_TRASH_FILE.test(fileName)) return { error: "Invalid trash entry." };
+  const full = path.join(trashDir(), fileName);
+  const data = await readTrashPayload(fileName);
+  const storedMeta = data?.meta && validMeta(data.meta) ? data.meta : null;
+  const id = storedMeta?.id ?? idFromTrashName(fileName);
+  if (!isValidId(id)) return { error: "Invalid page id." };
+  const store = await readStore();
+  if (store.pages.some((p) => p.id === id)) return { error: "A page with this id already exists." };
+  const parentId =
+    storedMeta?.parentId && store.pages.some((p) => p.id === storedMeta.parentId)
+      ? storedMeta.parentId
+      : null;
+  const siblings = store.pages.filter((p) => p.parentId === parentId);
+  const meta: PageMeta = {
+    id,
+    title: (storedMeta?.title ?? "").trim() || "Untitled",
+    icon: storedMeta?.icon || "📄",
+    parentId,
+    order: siblings.length === 0 ? 0 : Math.max(...siblings.map((s) => s.order)) + 1,
+    updatedAt: Date.now(),
+  };
+  const json =
+    data?.json && typeof data.json === "object" && (data.json as Record<string, unknown>).type === "doc"
+      ? data.json
+      : initialDoc();
+  try {
+    await mkdir(workspaceDir(), { recursive: true });
+    await writeFile(docFile(id), JSON.stringify(json), "utf8");
+    store.pages.push(meta);
+    await writeStore(store);
+    await rm(full).catch(() => undefined);
+    return { meta };
+  } catch (err) {
+    return { error: messageOf(err) };
+  }
+}
+
+/** Erase one trash entry for good. */
+export async function deleteTrash(fileName: string): Promise<{ error?: string }> {
+  if (!SAFE_TRASH_FILE.test(fileName)) return { error: "Invalid trash entry." };
+  try {
+    await rm(path.join(trashDir(), fileName));
+    return {};
+  } catch (err) {
+    return { error: messageOf(err) };
   }
 }

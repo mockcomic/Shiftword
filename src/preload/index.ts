@@ -10,6 +10,7 @@ import type {
   RecentEntry,
   SaveDocPayload,
   SaveRawPayload,
+  TrashEntry,
   WorkspacePage,
   WriteFileResult,
 } from "../shared/types";
@@ -39,6 +40,10 @@ const api: FwApi = {
   movePage: (id: string, parentId: string | null, order: number) =>
     ipcRenderer.invoke("page:move", id, parentId, order) as Promise<{ error?: string }>,
   deletePage: (id: string) => ipcRenderer.invoke("page:delete", id) as Promise<{ error?: string }>,
+  listTrash: () => ipcRenderer.invoke("page:trashList") as Promise<TrashEntry[]>,
+  restoreTrash: (file: string) =>
+    ipcRenderer.invoke("page:trashRestore", file) as Promise<{ meta?: PageMeta; error?: string }>,
+  deleteTrash: (file: string) => ipcRenderer.invoke("page:trashDelete", file) as Promise<{ error?: string }>,
   openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url) as Promise<boolean>,
   onCommand: (cb: (cmd: MenuCommand) => void) => {
     const listener = (_e: Electron.IpcRendererEvent, cmd: MenuCommand): void => cb(cmd);

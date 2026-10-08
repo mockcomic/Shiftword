@@ -1,5 +1,5 @@
 import type { Editor, JSONContent } from "@tiptap/core";
-import type { FwApi, PageMeta, PageSettings, WriteFileResult } from "../../shared/types";
+import type { FwApi, PageMeta, PageSettings, TrashEntry, WriteFileResult } from "../../shared/types";
 import { PAGE_SIZES } from "../../shared/types";
 import type { PageSize } from "../../shared/types";
 import { createEditor, INITIAL_DOC, syncDocAttrStyles } from "./editor/create-editor";
@@ -44,6 +44,7 @@ let printMode = false;
 // or a workspace page (autosaved — no Ctrl+S for it, the save *is* the edit).
 let currentPageId: string | null = null;
 let pagesCache: PageMeta[] = [];
+let trashCache: TrashEntry[] = [];
 let sidebar: Sidebar | null = null;
 let pageSaveTimer: number | null = null;
 /** Changes made since the page last hit disk (drives the quit flush). */
@@ -58,7 +59,12 @@ async function reloadPages(): Promise<void> {
   } catch {
     pagesCache = [];
   }
-  sidebar.refresh(pagesCache);
+  try {
+    trashCache = await fw.listTrash();
+  } catch {
+    trashCache = [];
+  }
+  sidebar.refresh(pagesCache, trashCache);
 }
 
 /** Debounced autosave: a page reaches disk 600 ms after the last keystroke. */
@@ -226,6 +232,56 @@ async function deletePageUI(id: string): Promise<void> {
     editor?.commands.setContent(INITIAL_DOC, { emitUpdate: false });
     docName = "Untitled";
     markClean();
+  }
+  void reloadPages();
+}
+
+/** Put a trashed page back into the tree. */
+async function restoreTrashEntry(file: string): Promise<void> {
+  if (!fw) return;
+  const res = await fw.restoreTrash(file).catch((err: unknown) => ({ error: String(err) }));
+  if (res?.error) {
+    await alertDialog(`Could not restore the page: ${res.error}`);
+    return;
+  }
+  void reloadPages();
+}
+
+/** Erase one trash entry (with a confirmation — it is irreversible). */
+async function deleteTrashEntry(file: string): Promise<void> {
+  if (!fw) return;
+  const entry = trashCache.find((t) => t.file === file);
+  const yes = await confirmModal({
+    title: "Delete forever",
+    message: `Permanently delete "${entry?.title ?? "this page"}"? This cannot be undone.`,
+    okLabel: "Delete forever",
+    danger: true,
+  });
+  if (!yes) return;
+  const res = await fw.deleteTrash(file).catch((err: unknown) => ({ error: String(err) }));
+  if (res?.error) {
+    await alertDialog(`Could not delete the trash entry: ${res.error}`);
+    return;
+  }
+  void reloadPages();
+}
+
+/** Erase every trash entry (with one confirmation, not one per page). */
+async function emptyTrashUI(): Promise<void> {
+  if (!fw || trashCache.length === 0) return;
+  const yes = await confirmModal({
+    title: "Empty trash",
+    message: `Permanently delete ${trashCache.length} ${trashCache.length === 1 ? "page" : "pages"}? This cannot be undone.`,
+    okLabel: "Empty trash",
+    danger: true,
+  });
+  if (!yes) return;
+  for (const t of trashCache) {
+    const res = await fw.deleteTrash(t.file).catch(() => null);
+    if (res?.error) {
+      await alertDialog(`Could not empty the trash: ${res.error}`);
+      break;
+    }
   }
   void reloadPages();
 }
@@ -549,6 +605,9 @@ export function initApp(): void {
       })();
     },
     onQuickSwitcher: () => openQuickSwitch(),
+    onRestoreTrash: (file) => void restoreTrashEntry(file),
+    onDeleteTrash: (file) => void deleteTrashEntry(file),
+    onEmptyTrash: () => void emptyTrashUI(),
   });
   if (fw) {
     void reloadPages();

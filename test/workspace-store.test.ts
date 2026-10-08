@@ -149,6 +149,74 @@ describe("workspace store", () => {
   });
 });
 
+describe("trash restore", () => {
+  it("lists deleted pages by title and restores them intact", async () => {
+    const meta = (await ws.createPage({ title: "Doomed draft" }))!;
+    const doc = {
+      type: "doc",
+      attrs: {},
+      content: [
+        { type: "page", content: [{ type: "paragraph", content: [{ type: "text", text: "keep me" }] }] },
+      ],
+    };
+    await ws.writePage(meta.id, doc);
+    expect(await ws.deletePage(meta.id)).toEqual({});
+
+    const trashed = await ws.listTrash();
+    expect(trashed).toHaveLength(1);
+    expect(trashed[0].title).toBe("Doomed draft");
+    expect(trashed[0].id).toBe(meta.id);
+    expect(trashed[0].deletedAt).toBeGreaterThan(0);
+
+    const res = await ws.restoreTrash(trashed[0].file);
+    expect(res.error).toBeUndefined();
+    expect(res.meta?.title).toBe("Doomed draft");
+    expect(await ws.listTrash()).toEqual([]);
+    const read = await ws.readPage(meta.id);
+    expect(JSON.stringify(read?.json)).toContain("keep me");
+  });
+
+  it("re-attaches a restored page to the root when its parent is gone too", async () => {
+    const parent = (await ws.createPage({ title: "P" }))!;
+    const child = (await ws.createPage({ title: "C", parentId: parent.id }))!;
+    await ws.deletePage(child.id); // child trashed while parent still exists
+    await ws.deletePage(parent.id); // then the parent goes too
+    const childEntry = (await ws.listTrash()).find((t) => t.id === child.id)!;
+    expect(childEntry.parentId).toBe(parent.id); // remembered at delete time
+    const res = await ws.restoreTrash(childEntry.file);
+    expect(res.meta?.parentId).toBeNull();
+  });
+
+  it("surfaces legacy raw-doc trash files and restores them as clean pages", async () => {
+    const { mkdir } = await import("node:fs/promises");
+    const trash = join(userDataDir, "workspace", ".trash");
+    await mkdir(trash, { recursive: true });
+    await writeFile(join(trash, "p-legacy1-abc.json"), JSON.stringify({ type: "doc", attrs: {} }));
+    const entry = (await ws.listTrash()).find((t) => t.id === "p-legacy1")!;
+    expect(entry.title).toBe("Untitled");
+    const res = await ws.restoreTrash(entry.file);
+    expect(res.error).toBeUndefined();
+    expect(await ws.readPage("p-legacy1")).toBeTruthy();
+  });
+
+  it("deleteTrash erases one entry for good", async () => {
+    const meta = (await ws.createPage({ title: "Erased" }))!;
+    await ws.deletePage(meta.id);
+    const entry = (await ws.listTrash())[0]!;
+    expect(await ws.deleteTrash(entry.file)).toEqual({});
+    expect(await ws.listTrash()).toEqual([]);
+    expect(existsSync(join(userDataDir, "workspace", ".trash", entry.file))).toBe(false);
+  });
+
+  it("refuses trash names that could steer a path", async () => {
+    for (const evil of ["../evil.json", "no-json", "a.json", "p a-1.json"]) {
+      const r = await ws.restoreTrash(evil);
+      expect(r.error).toMatch(/Invalid/);
+      expect((await ws.deleteTrash(evil)).error).toMatch(/Invalid/);
+    }
+  });
+});
+
 describe("page IPC handlers", () => {
   it("create → list → write → read → delete through the bridge", async () => {
     const meta = (await call("page:create", { title: "Via IPC" })) as Record<string, unknown>;
@@ -171,6 +239,22 @@ describe("page IPC handlers", () => {
     expect(await handlers.get("page:create")!(rogue)).toBeNull();
     const w = (await handlers.get("page:write")!(rogue, "whatever123", {})) as { error?: string };
     expect(w.error).toBeTruthy();
+    expect(await handlers.get("page:trashList")!(rogue)).toEqual([]);
+    const rt = (await handlers.get("page:trashRestore")!(rogue, "p-x-y.json")) as { error?: string };
+    expect(rt.error).toBeTruthy();
+    const dt = (await handlers.get("page:trashDelete")!(rogue, "p-x-y.json")) as { error?: string };
+    expect(dt.error).toBeTruthy();
+  });
+
+  it("delete → trashList → restore through the bridge", async () => {
+    const meta = (await call("page:create", { title: "Via IPC trash" })) as { id: string };
+    expect(await call("page:delete", meta.id)).toEqual({});
+    const trashed = (await call("page:trashList")) as Array<{ file: string; title: string }>;
+    expect(trashed.map((t) => t.title)).toContain("Via IPC trash");
+    const res = (await call("page:trashRestore", trashed[0].file)) as { error?: string };
+    expect(res.error).toBeUndefined();
+    const listed = (await call("page:list")) as Array<{ id: string }>;
+    expect(listed.map((p) => p.id)).toContain(meta.id);
   });
 
   it("keeps the metadata file valid JSON after many operations", async () => {

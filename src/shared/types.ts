@@ -133,6 +133,18 @@ export interface WorkspacePage {
   json: Record<string, unknown>;
 }
 
+/** A page document as trashed (restorable) — keyed by its `.trash` file name. */
+export interface TrashEntry {
+  /** File name inside `workspace/.trash/` — the unique key for restore/delete. */
+  file: string;
+  id: string;
+  title: string;
+  icon: string;
+  parentId: string | null;
+  updatedAt: number;
+  deletedAt: number;
+}
+
 /** Anything larger is refused: an image-laden page over IPC must stay sane. */
 export const MAX_PAGE_JSON_BYTES = 10 * 1024 * 1024;
 
@@ -175,6 +187,12 @@ export interface FwApi {
   movePage(id: string, parentId: string | null, order: number): Promise<{ error?: string }>;
   /** Delete a page — moved to the workspace trash, not erased. */
   deletePage(id: string): Promise<{ error?: string }>;
+  /** Deleted pages, newest first — the trash the sidebar offers to restore. */
+  listTrash(): Promise<TrashEntry[]>;
+  /** Put a trashed page back into the tree (keyed by the trash file name). */
+  restoreTrash(file: string): Promise<{ meta?: PageMeta; error?: string }>;
+  /** Erase one trash entry for good. */
+  deleteTrash(file: string): Promise<{ error?: string }>;
   /**
    * Open an external URL in the user's desktop browser. The main process
    * rejects anything but http/https/mailto/tel; returns whether it opened.

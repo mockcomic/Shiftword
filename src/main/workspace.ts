@@ -2,7 +2,7 @@ import { app } from "electron";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PageMeta, TrashEntry, WorkspacePage } from "../shared/types";
-import { MAX_PAGE_JSON_BYTES } from "../shared/types";
+import { MAX_PAGE_JSON_BYTES, isStorableCover } from "../shared/types";
 
 /**
  * The workspace: a local page tree under `userData/workspace/`.
@@ -68,9 +68,7 @@ function messageOf(err: unknown): string {
  * would be that same file on a case-insensitive volume.
  */
 function isValidId(id: unknown): id is string {
-  return (
-    typeof id === "string" && SAFE_ID.test(path.basename(id)) && id.toLowerCase() !== "pages"
-  );
+  return typeof id === "string" && SAFE_ID.test(path.basename(id)) && id.toLowerCase() !== "pages";
 }
 
 function initialDoc(): Record<string, unknown> {
@@ -98,12 +96,18 @@ function validMeta(m: unknown): m is PageMeta {
   );
 }
 
+/** Drop a malformed cover (wrong type, oversized, not a data URL) on read. */
+function normalizeMeta(m: PageMeta): PageMeta {
+  if (m.cover !== undefined && m.cover !== null && !isStorableCover(m.cover)) m.cover = undefined;
+  return m;
+}
+
 async function readStore(): Promise<MetaStore> {
   try {
     const raw = await readFile(metaFile(), "utf8");
     const data: unknown = JSON.parse(raw);
     const list = Array.isArray(data) ? data : (data as MetaStore)?.pages;
-    const pages = Array.isArray(list) ? list.filter(validMeta) : [];
+    const pages = Array.isArray(list) ? list.filter(validMeta).map(normalizeMeta) : [];
     return { pages };
   } catch {
     return { pages: [] };
@@ -222,7 +226,7 @@ export async function createPage(opts?: {
 
 export async function renamePage(
   id: string,
-  patch: { title?: string; icon?: string },
+  patch: { title?: string; icon?: string; cover?: string | null },
 ): Promise<PageMeta | null> {
   if (!isValidId(id)) return null;
   return withStoreLock(async () => {
@@ -231,9 +235,76 @@ export async function renamePage(
     if (!meta) return null;
     if (typeof patch.title === "string" && patch.title.trim()) meta.title = patch.title.trim().slice(0, 200);
     if (typeof patch.icon === "string" && [...patch.icon].length <= 4) meta.icon = patch.icon;
+    if (patch.cover === null || patch.cover === "") {
+      meta.cover = null;
+    } else if (isStorableCover(patch.cover)) {
+      // A cover is an image data URL, never an arbitrary string: the size and
+      // `data:image/` checks keep `pages.json` bounded and the CSP happy.
+      meta.cover = patch.cover;
+    }
     meta.updatedAt = Date.now();
     await writeStore(store);
     return meta;
+  });
+}
+
+/**
+ * Deep-copy a page and its whole subtree (Notion's Duplicate). The copy lands
+ * beside the original with the same icon/cover and a "(copy)" title; every
+ * node in the copied subtree gets a fresh id, and the document files are
+ * cloned alongside the metadata so the copy opens with the same content.
+ */
+export async function duplicatePage(id: string): Promise<{ meta?: PageMeta; error?: string }> {
+  if (!isValidId(id)) return { error: "Invalid page id." };
+  return withStoreLock(async () => {
+    const store = await readStore();
+    const source = store.pages.find((p) => p.id === id);
+    if (!source) return { error: "Unknown page." };
+
+    // The source subtree in parent-before-child order, so each clone can be
+    // created while its (already cloned) parent is known.
+    const subtree: PageMeta[] = [source];
+    for (let i = 0; i < subtree.length; i++) {
+      for (const p of store.pages) {
+        if (p.parentId === subtree[i].id && !subtree.some((s) => s.id === p.id)) subtree.push(p);
+      }
+    }
+
+    const idMap = new Map<string, string>();
+    for (const p of subtree) idMap.set(p.id, newId());
+
+    try {
+      await ensureWorkspaceDir();
+      const clones: PageMeta[] = [];
+      for (const p of subtree) {
+        const cloneId = idMap.get(p.id)!;
+        // Read the doc file best-effort; an unreadable page duplicates as a
+        // blank one instead of failing the whole copy.
+        let json: unknown;
+        try {
+          json = JSON.parse(await readFile(docFile(p.id), "utf8"));
+        } catch {
+          json = initialDoc();
+        }
+        await writeFileAtomic(docFile(cloneId), JSON.stringify(json));
+        clones.push({
+          id: cloneId,
+          title: p.id === source.id ? `${p.title} (copy)`.slice(0, 200) : p.title,
+          icon: p.icon,
+          cover: p.cover ?? null,
+          // The original parent maps to its clone; the root copy keeps the
+          // source's parent (or root).
+          parentId: p.parentId ? (idMap.get(p.parentId) ?? null) : p.parentId,
+          order: p.order,
+          updatedAt: Date.now(),
+        });
+      }
+      store.pages.push(...clones);
+      await writeStore(store);
+      return { meta: clones[0] };
+    } catch (err) {
+      return { error: messageOf(err) };
+    }
   });
 }
 
@@ -427,6 +498,7 @@ export async function restoreTrash(fileName: string): Promise<{ meta?: PageMeta;
       parentId,
       order: siblings.length === 0 ? 0 : Math.max(...siblings.map((s) => s.order)) + 1,
       updatedAt: Date.now(),
+      cover: storedMeta?.cover ?? null,
     };
     const json =
       data?.json && typeof data.json === "object" && (data.json as Record<string, unknown>).type === "doc"

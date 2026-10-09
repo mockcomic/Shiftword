@@ -92,6 +92,15 @@ async function boot(): Promise<void> {
       if (patch.icon) s.meta.icon = patch.icon;
       return s.meta;
     }),
+    duplicatePage: vi.fn(async (id: string) => {
+      const s = store.get(id);
+      if (!s) return { error: "Unknown page." };
+      const copy = makeStored(`${s.meta.title} (copy)`, JSON.parse(JSON.stringify(s.json)));
+      copy.meta.parentId = s.meta.parentId;
+      copy.meta.icon = s.meta.icon;
+      store.set(copy.meta.id, copy);
+      return { meta: copy.meta };
+    }),
     movePage: vi.fn(async (id: string, parentId: string | null) => {
       const s = store.get(id);
       if (!s) return { error: "Unknown page." };
@@ -299,6 +308,22 @@ describe("workspace pages", () => {
     ok.click();
     await tick(50);
     expect(document.title).toContain("Untitled");
+  });
+
+  it("the row menu duplicates a page beside the original", async () => {
+    const s = makeStored("Original");
+    store.set(s.meta.id, s);
+    commandCb!({ id: "page:open", path: s.meta.id });
+    await tick(50);
+    document.querySelector<HTMLButtonElement>("#sidebar .side-more")!.click();
+    await tick(20);
+    Array.from(document.querySelectorAll<HTMLButtonElement>(".block-menu-item"))
+      .find((b) => b.textContent?.includes("Duplicate"))!
+      .click();
+    await tick(50);
+    expect(fw.duplicatePage).toHaveBeenCalledWith(s.meta.id);
+    expect([...store.values()].map((x) => x.meta.title)).toContain("Original (copy)");
+    expect(document.querySelector("#side-tree")!.textContent).toContain("Original (copy)");
   });
 
   it("the sidebar trash lists deleted pages and restores them", async () => {

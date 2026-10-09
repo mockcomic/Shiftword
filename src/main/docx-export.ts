@@ -138,6 +138,12 @@ interface ExportContext {
     children: Paragraph[];
   }>;
   revision: { n: number };
+  /**
+   * Every heading in document order (level + plain text) — the table-of-
+   * contents node carries no content in the JSON, so its export renders from
+   * this list, exactly like the editor's live NodeView.
+   */
+  headings: Array<{ level: number; text: string }>;
 }
 
 /**
@@ -154,6 +160,14 @@ function walkPm(node: PMNode, visit: (n: PMNode) => void, depth = 0): void {
   childrenOf(node).forEach((c) => walkPm(c, visit, depth + 1));
 }
 
+/** Concatenated plain text of a node subtree (bounded like `walkPm`). */
+function flattenText(node: PMNode, depth = 0): string {
+  if (depth > MAX_WALK_DEPTH) return "";
+  let out = typeof node.text === "string" ? node.text : "";
+  for (const child of childrenOf(node)) out += flattenText(child, depth + 1);
+  return out;
+}
+
 interface RawCommentRecord {
   author?: string;
   text?: string;
@@ -167,6 +181,7 @@ function buildExportContext(doc: PMDoc): ExportContext {
     comments: new Map(),
     commentDefs: [],
     revision: { n: 0 },
+    headings: [],
   };
   const store = (doc.attrs?.comments ?? {}) as Record<string, RawCommentRecord>;
   const top: PMNode = { type: "doc", content: childrenOf(doc as unknown as PMNode) };
@@ -175,6 +190,13 @@ function buildExportContext(doc: PMDoc): ExportContext {
       const ordinal = ctx.footnotes.size + 1;
       ctx.footnotes.set(node, ordinal);
       ctx.footnoteTexts.set(ordinal, String(node.attrs?.text ?? ""));
+    }
+    if (node.type === "heading") {
+      // Plain text of the whole heading subtree, in document order — the
+      // TOC block's export entries (see the `fwToc` case below).
+      const level = Math.min(3, Math.max(1, Math.round(num(node.attrs?.level, 1))));
+      const text = flattenText(node).trim();
+      ctx.headings.push({ level, text });
     }
     for (const mark of node.marks ?? []) {
       if (mark.type !== "comment") continue;
@@ -818,6 +840,78 @@ function codeBlockToParagraphs(node: PMNode, isLastInParent: boolean): Paragraph
   );
 }
 
+/**
+ * A toggle exports like a callout's flat shape: the summary paragraph carries
+ * the `FwToggle` style plus a ▸/▾ glyph (which doubles as the collapsed flag
+ * on import when style ids survive), and every body paragraph is tagged
+ * `FwToggleBody` so the importer can re-attach it to the toggle.
+ */
+function toggleToParagraphs(node: PMNode, isLastInParent: boolean, ctx: ExportContext): Paragraph[] {
+  const blocks = childrenOf(node);
+  const collapsed = node.attrs?.collapsed === true;
+  const glyph = collapsed ? "▸" : "▾";
+  const out: Paragraph[] = [];
+  blocks.forEach((block, i) => {
+    const isLastBlock = i === blocks.length - 1;
+    const after = isLastBlock ? lastChildAfterTwips(isLastInParent) : MIDDLE_AFTER_TWIPS;
+    const style = i === 0 ? "FwToggle" : "FwToggleBody";
+    if (block.type === "paragraph" || block.type === "heading") {
+      const runs = buildRuns(childrenOf(block), ctx);
+      if (i === 0) {
+        runs.unshift(
+          new TextRun({ text: `${glyph} `, font: { name: FONT_SYMBOL }, size: BODY_SIZE_HALF_POINTS }),
+        );
+      }
+      out.push(
+        new Paragraph({
+          style,
+          spacing: { after },
+          ...(i === 0 ? {} : { indent: { left: 360 } }),
+          children: runs,
+        }),
+      );
+      return;
+    }
+    out.push(
+      ...blockToDocChildren(block, 0, new OrderedNumbering(), isLastBlock && isLastInParent, ctx).filter(
+        (c): c is Paragraph => c instanceof Paragraph,
+      ),
+    );
+  });
+  if (out.length === 0) {
+    out.push(
+      new Paragraph({
+        style: "FwToggle",
+        spacing: { after: lastChildAfterTwips(isLastInParent) },
+        children: [],
+      }),
+    );
+  }
+  return out;
+}
+
+/**
+ * The TOC node stores no content — the export renders the heading snapshot
+ * collected in `buildExportContext` as `FwToc`-tagged paragraphs (one per
+ * entry plus the title), which the importer collapses back into one node.
+ */
+function tocToParagraphs(ctx: ExportContext): Paragraph[] {
+  const out: Paragraph[] = [new Paragraph({ style: "FwToc", children: [new TextRun("Table of contents")] })];
+  for (const h of ctx.headings) {
+    out.push(
+      new Paragraph({
+        style: "FwToc",
+        indent: { left: (h.level - 1) * 360 },
+        children: [new TextRun(h.text || "Untitled heading")],
+      }),
+    );
+  }
+  if (ctx.headings.length === 0) {
+    out.push(new Paragraph({ style: "FwToc", children: [new TextRun("(no headings)")] }));
+  }
+  return out;
+}
+
 function blockToDocChildren(
   node: PMNode,
   contentWidthPx: number,
@@ -855,6 +949,10 @@ function blockToDocChildren(
       ];
     case "fwCodeBlock":
       return codeBlockToParagraphs(node, isLast);
+    case "fwToggle":
+      return toggleToParagraphs(node, isLast, ctx);
+    case "fwToc":
+      return tocToParagraphs(ctx);
     case "bulletList":
       return listItemsToParagraphs(node, "bullet", 0, null, isLast, ctx);
     case "orderedList": {
@@ -989,6 +1087,9 @@ function documentStyles() {
         run: { font: FONT_CODE, size: CODE_SIZE_HALF_POINTS },
       },
       { id: "FwDivider", name: "FreeWord Divider", basedOn: "Normal" as const },
+      { id: "FwToggle", name: "FreeWord Toggle", basedOn: "Normal" as const },
+      { id: "FwToggleBody", name: "FreeWord Toggle Body", basedOn: "Normal" as const },
+      { id: "FwToc", name: "FreeWord Table of Contents", basedOn: "Normal" as const },
     ],
   };
 }

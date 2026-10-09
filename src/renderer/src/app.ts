@@ -1,6 +1,6 @@
 import type { Editor, JSONContent } from "@tiptap/core";
 import type { FwApi, PageMeta, PageSettings, TrashEntry, WriteFileResult } from "../../shared/types";
-import { PAGE_SIZES } from "../../shared/types";
+import { MAX_COVER_CHARS, PAGE_SIZES } from "../../shared/types";
 import type { PageSize } from "../../shared/types";
 import { createEditor, INITIAL_DOC, syncDocAttrStyles } from "./editor/create-editor";
 import { invalidateMeasureCache, runPagination, schedulePaginate } from "./editor/pagination";
@@ -25,6 +25,8 @@ import {
 } from "./features/appearance";
 import { createSidebar } from "./features/sidebar";
 import type { Sidebar } from "./features/sidebar";
+import { createPageHero } from "./features/page-hero";
+import type { PageHero } from "./features/page-hero";
 import { openQuickSwitcher } from "./features/quick-switcher";
 import { closeFindPanel, handleFindCommand } from "./features/find-replace";
 import { openHeaderFooterModal } from "./features/header-footer";
@@ -58,6 +60,7 @@ let currentPageId: string | null = null;
 let pagesCache: PageMeta[] = [];
 let trashCache: TrashEntry[] = [];
 let sidebar: Sidebar | null = null;
+let pageHero: PageHero | null = null;
 let pageSaveTimer: number | null = null;
 /** Changes made since the page last hit disk (drives the quit flush). */
 let pageUnsaved = false;
@@ -77,6 +80,10 @@ async function reloadPages(): Promise<void> {
     trashCache = [];
   }
   sidebar.refresh(pagesCache, trashCache);
+  // The page hero shows the live metadata of the open page (title/icon/cover)
+  // — refreshing it here keeps renames, icon changes and cover picks in sync
+  // with every code path that reloads the tree.
+  pageHero?.setMeta(currentPageId ? (pagesCache.find((p) => p.id === currentPageId) ?? null) : null);
 }
 
 /** Debounced autosave: a page reaches disk 600 ms after the last keystroke. */
@@ -186,6 +193,7 @@ async function openPage(id: string): Promise<void> {
     currentPath = null;
     docName = page.meta.title || "Untitled";
     pageUnsaved = false;
+    pageHero?.setMeta(page.meta);
     markClean();
     syncDocAttrStyles(editor);
     runPagination(editor);
@@ -255,6 +263,52 @@ function openQuickSwitch(): void {
   })();
 }
 
+// --- page hero actions (cover / icon / inline title) ------------------------
+
+async function pickCoverFor(id: string): Promise<void> {
+  if (!fw) return;
+  const img = await fw.pickImage().catch(() => null);
+  if (!img) return; // dialog dismissed
+  if (img.dataUrl.length > MAX_COVER_CHARS) {
+    await alertDialog("That image is too large to use as a page cover.");
+    return;
+  }
+  const meta = await fw.renamePage(id, { cover: img.dataUrl }).catch(() => null);
+  if (!meta) {
+    await alertDialog("Could not set the page cover.");
+    return;
+  }
+  void reloadPages();
+}
+
+async function removeCoverFor(id: string): Promise<void> {
+  if (!fw) return;
+  await fw.renamePage(id, { cover: null }).catch(() => null);
+  void reloadPages();
+}
+
+async function commitHeroTitle(id: string, title: string): Promise<void> {
+  if (!fw) return;
+  await fw.renamePage(id, { title }).catch(() => null);
+  if (currentPageId === id) {
+    docName = title;
+    updateTitle();
+    pageHero?.refreshTitle(title);
+  }
+  void reloadPages();
+}
+
+/** Deep-copy a page (with its subtree) beside the original. */
+async function duplicatePageUI(id: string): Promise<void> {
+  if (!fw) return;
+  const res = await fw.duplicatePage(id).catch((err: unknown) => ({ error: String(err) }));
+  if (res?.error) {
+    await alertDialog(`Could not duplicate the page: ${res.error}`);
+    return;
+  }
+  void reloadPages();
+}
+
 async function deletePageUI(id: string): Promise<void> {
   if (!fw) return;
   const meta = pagesCache.find((p) => p.id === id);
@@ -275,6 +329,7 @@ async function deletePageUI(id: string): Promise<void> {
     currentPageId = null;
     pageUnsaved = false;
     sidebar?.setActive(null);
+    pageHero?.setMeta(null);
     editor?.commands.setContent(INITIAL_DOC, { emitUpdate: false });
     docName = "Untitled";
     markClean();
@@ -398,7 +453,7 @@ function setPrintMode(on: boolean): void {
   const ps = PAGE_SIZES[(attrs.size ?? "a4") as PageSize] ?? PAGE_SIZES.a4;
   styleEl.textContent = [
     `@page { size: ${ps.w}mm ${ps.h}mm; margin: 0; }`,
-    "#toolbar, #statusbar, #sidebar, #fw-find-panel, #fw-comments { display: none !important; }",
+    "#toolbar, #statusbar, #sidebar, #fw-find-panel, #fw-comments, #fw-page-hero { display: none !important; }",
     ".fw-match, .fw-match-active { background: transparent !important; outline: none !important; }",
     "#canvas { background: white !important; padding: 0 !important; }",
     ".fw-doc { zoom: 1 !important; }",
@@ -467,6 +522,7 @@ async function newDoc(): Promise<void> {
     currentPageId = null;
     pageUnsaved = false;
     sidebar?.setActive(null);
+    pageHero?.setMeta(null);
     docName = "Untitled";
     markClean();
     syncDocAttrStyles(editor);
@@ -507,6 +563,7 @@ async function openFile(path?: string): Promise<void> {
     currentPageId = null;
     pageUnsaved = false;
     sidebar?.setActive(null);
+    pageHero?.setMeta(null);
     docName = res.name.replace(/\.(docx|txt|html|htm)$/i, "");
     markClean();
     syncDocAttrStyles(editor);
@@ -675,6 +732,7 @@ export function initApp(): void {
     onNewPage: (parentId) => void createAndOpenPage(parentId),
     onRename: (id) => void renameCurrentOrId(id),
     onSetIcon: (id) => void setIconFor(id),
+    onDuplicate: (id) => void duplicatePageUI(id),
     onDelete: (id) => void deletePageUI(id),
     onMove: (id, parentId, order) => {
       void (async () => {
@@ -687,6 +745,14 @@ export function initApp(): void {
     onRestoreTrash: (file) => void restoreTrashEntry(file),
     onDeleteTrash: (file) => void deleteTrashEntry(file),
     onEmptyTrash: () => void emptyTrashUI(),
+  });
+  // Notion-style page header (cover / icon / inline title) above the
+  // canvas for workspace pages; Word mode and print hide it via CSS.
+  pageHero = createPageHero({
+    onPickCover: (id) => void pickCoverFor(id),
+    onRemoveCover: (id) => void removeCoverFor(id),
+    onSetIcon: (id) => void setIconFor(id),
+    onRename: (id, title) => void commitHeroTitle(id, title),
   });
   if (fw) {
     void reloadPages();

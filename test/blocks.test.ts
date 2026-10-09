@@ -49,7 +49,16 @@ function findNode(json: PM, type: string): PM | undefined {
 
 describe("block schema registration", () => {
   it("registers the new blocks in the block group", () => {
-    for (const name of ["taskList", "taskItem", "callout", "fwQuote", "divider", "fwCodeBlock"]) {
+    for (const name of [
+      "taskList",
+      "taskItem",
+      "callout",
+      "fwQuote",
+      "divider",
+      "fwCodeBlock",
+      "fwToggle",
+      "fwToc",
+    ]) {
       expect(schema.nodes[name], `${name} missing`).toBeTruthy();
     }
     expect(schema.nodes["taskList"].spec.group).toBe("block");
@@ -57,6 +66,10 @@ describe("block schema registration", () => {
     expect(schema.nodes["fwQuote"].spec.group).toBe("block");
     expect(schema.nodes["divider"].spec.group).toBe("block");
     expect(schema.nodes["fwCodeBlock"].spec.group).toBe("block");
+    expect(schema.nodes["fwToggle"].spec.group).toBe("block");
+    expect(schema.nodes["fwToc"].spec.group).toBe("block");
+    // The TOC is a contentless marker — its entries are rendered live.
+    expect(schema.nodes["fwToc"].spec.atom).toBe(true);
     // taskItem lives ONLY inside taskList — no block group, or the page node
     // would let bare items escape the list.
     expect(schema.nodes["taskItem"].spec.group ?? "").not.toContain("block");
@@ -100,11 +113,34 @@ describe("HTML parse path", () => {
     const callout = findNode(json, "callout");
     expect(callout?.attrs?.icon).toBe("⚠️");
   });
+
+  it("parses a collapsed toggle and a table-of-contents marker", () => {
+    const json = parseHtml(
+      '<div data-type="fwToggle" data-collapsed="true"><span class="fw-toggle-caret"></span>' +
+        '<div class="fw-toggle-content"><p>summary</p><p>hidden body</p></div></div>' +
+        '<div data-type="fwToc" class="fw-toc"></div>',
+    );
+    const types = flatten(json);
+    expect(types).toContain("fwToggle");
+    expect(types).toContain("fwToc");
+    const toggle = findNode(json, "fwToggle");
+    expect(toggle?.attrs?.collapsed).toBe(true);
+    expect(JSON.stringify(json)).toContain("summary");
+    expect(JSON.stringify(json)).toContain("hidden body");
+  });
+
+  it("parses an expanded toggle (default collapsed=false)", () => {
+    const json = parseHtml('<div data-type="fwToggle" data-collapsed="false"><div><p>open</p></div></div>');
+    const toggle = findNode(json, "fwToggle");
+    expect(toggle?.attrs?.collapsed).toBe(false);
+  });
 });
 
 describe("block catalog", () => {
   it("filters by label and keywords", () => {
     expect(filterBlockDefs(BLOCK_DEFS, "todo").map((d) => d.id)).toContain("taskList");
+    expect(filterBlockDefs(BLOCK_DEFS, "toggle").map((d) => d.id)).toContain("toggle");
+    expect(filterBlockDefs(BLOCK_DEFS, "contents").map((d) => d.id)).toContain("toc");
     expect(filterBlockDefs(BLOCK_DEFS, "head").map((d) => d.id)).toEqual(
       expect.arrayContaining(["heading1", "heading2", "heading3"]),
     );
@@ -165,6 +201,27 @@ describe("block catalog", () => {
       const types = (page.content as PM[]).map((c) => c.type);
       expect(types).toContain("divider");
       expect(types).toContain("paragraph");
+    });
+
+    it("toggle wraps the text in a collapsed:false block", () => {
+      editor.commands.setTextSelection(2);
+      const def = BLOCK_DEFS.find((d) => d.id === "toggle")!;
+      expect(def.apply(editor, "secret plans")).toBe(true);
+      const page = (editor.getJSON().content as PM[])[0];
+      const toggle = (page.content as PM[]).find((c) => c.type === "fwToggle");
+      expect(toggle).toBeTruthy();
+      expect(toggle!.attrs).toMatchObject({ collapsed: false });
+      expect(JSON.stringify(toggle)).toContain("secret plans");
+    });
+
+    it("table of contents inserts a standalone marker trailed by a paragraph", () => {
+      editor.commands.setTextSelection(2);
+      const def = BLOCK_DEFS.find((d) => d.id === "toc")!;
+      expect(def.apply(editor, "")).toBe(true);
+      const page = (editor.getJSON().content as PM[])[0];
+      const types = (page.content as PM[]).map((c) => c.type);
+      expect(types[0]).toBe("fwToc");
+      expect(types).toContain("paragraph"); // atoms always get a caret home
     });
   });
 });
@@ -402,6 +459,20 @@ describe("Notion blocks survive the .docx round-trip", () => {
           },
           { type: "divider" },
           { type: "fwCodeBlock", content: [{ type: "text", text: "let x = 1\necho x" }] },
+          {
+            type: "heading",
+            attrs: { level: 1 },
+            content: [{ type: "text", text: "Chapter One" }],
+          },
+          { type: "fwToc" },
+          {
+            type: "fwToggle",
+            attrs: { collapsed: true },
+            content: [
+              { type: "paragraph", content: [{ type: "text", text: "click to expand" }] },
+              { type: "paragraph", content: [{ type: "text", text: "buried treasure" }] },
+            ],
+          },
         ],
       },
     ],
@@ -416,6 +487,8 @@ describe("Notion blocks survive the .docx round-trip", () => {
     expect(types).toContain("fwQuote");
     expect(types).toContain("divider");
     expect(types).toContain("fwCodeBlock");
+    expect(types).toContain("fwToggle");
+    expect(types).toContain("fwToc");
 
     // To-do check states survive.
     const list = findNode(json, "taskList")!;
@@ -433,6 +506,12 @@ describe("Notion blocks survive the .docx round-trip", () => {
     // Quote and code content survive.
     expect(JSON.stringify(json)).toContain("to be or not");
     expect(JSON.stringify(json)).toContain("let x = 1");
+
+    // Toggle keeps summary + body and the collapsed flag (via the ▸ glyph).
+    const toggle = findNode(json, "fwToggle")!;
+    expect(toggle?.attrs?.collapsed).toBe(true);
+    expect(JSON.stringify(json)).toContain("click to expand");
+    expect(JSON.stringify(json)).toContain("buried treasure");
 
     // No stray ☐/☑ glyphs leak into plain paragraphs.
     const paras = JSON.stringify(json);

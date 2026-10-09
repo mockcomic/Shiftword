@@ -15,6 +15,11 @@ stay on your machine.
     emoji icons, and **Ctrl+K quick switcher**; pages **autosave** (debounced) to
     `userData/workspace/`, no Ctrl+S needed; deleted pages land in a sidebar
     **Trash** section with Restore / Delete-forever / Empty-trash actions
+  - **Page covers & titles** — a Notion-style header above the canvas for workspace
+    pages: cover image (native picker), big emoji icon, and an inline-editable
+    title (covers/icons/titles live in page metadata, never in the document)
+  - **Duplicate page** — the sidebar row menu deep-copies a page and its whole
+    subtree (fresh ids, same content and cover) beside the original
   - **Dark theme** (View → Theme → Light / Dark / Follow system), persisted
 - **Rich text editing**: bold / italic / underline / strikethrough, text color,
   yellow & green highlighting, inline code (monospace), hyperlinks,
@@ -23,8 +28,10 @@ stay on your machine.
   line spacing (1.0 / 1.15 / 1.5 / 2.0)
 - **Blocks**: bulleted and numbered lists with nesting (Tab / Shift+Tab),
   to-do lists (checkboxes, click or Space), callouts (clickable icon),
-  blockquotes, dividers and fenced code blocks — most markdown input rules work
-  (`# `, `- `, `1. `, `[] `, `> `, `>> `, `---`, ` ` ```)
+  **toggle lists** (click the ▸ caret to collapse everything below the first
+  line), a live **table of contents** (renders the document's headings;
+  click an entry to jump to it), blockquotes, dividers and fenced code blocks —
+  most markdown input rules work (`# `, `- `, `1. `, `[] `, `> `, `>> `, `---`, ` ` ```)
 - **Soft line break**: Shift+Enter wraps inside a paragraph without starting a new one
 - **Tables**: insert a 3×3 table with a header row, add / delete rows and columns,
   toggle the header row, **drag column borders to resize**, **merge and split cells**
@@ -66,25 +73,29 @@ stay on your machine.
 
 ```bash
 npm install
-npm run dev        # start the app in development mode
+npm run dev        # start the app in development mode (hot reload)
+npm start          # run the real app through Electron — built automatically
+                   # when the bundles are missing or stale, no dist step
 ```
 
 ### Scripts
 
-| Script                  | What it does                                                 |
-| ----------------------- | ------------------------------------------------------------ |
-| `npm run dev`           | Run the app with hot reload                                  |
-| `npm run dev:nosandbox` | Run with the Chromium sandbox disabled (see Troubleshooting) |
-| `npm run build`         | Build main / preload / renderer bundles to `out/`            |
-| `npm run typecheck`     | Type-check both the node and web TypeScript projects         |
-| `npm test`              | Run the vitest suite (unit + integration)                    |
-| `npm run lint`          | ESLint over `src/`, `test/` and `scripts/`                   |
-| `npm run format`        | Prettier (also `format:check` for CI)                        |
-| `npm run icons`         | Regenerate `build/icon.*` from `scripts/make-icon.py`        |
-| `npm run dist:win`      | Package a Windows NSIS installer                             |
-| `npm run dist:mac`      | Package macOS DMGs (x64 + arm64)                             |
-| `npm run dist:linux`    | Package a Linux AppImage and .deb                            |
-| `npm run dist:all`      | All three targets at once (on the host that can build them)  |
+| Script                  | What it does                                                                                                                                                                                                                        |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`           | Run the app with hot reload                                                                                                                                                                                                         |
+| `npm run dev:nosandbox` | Run with the Chromium sandbox disabled (see Troubleshooting)                                                                                                                                                                        |
+| `npm start`             | Run the real app through Electron — builds first only when `out/` is missing or stale (no dist/packaging step); if Electron dies instantly (the sandbox-broker case below), it retries once automatically with the sandbox disabled |
+| `npm start:nosandbox`   | Same, with the Chromium sandbox disabled                                                                                                                                                                                            |
+| `npm run build`         | Build main / preload / renderer bundles to `out/`                                                                                                                                                                                   |
+| `npm run typecheck`     | Type-check both the node and web TypeScript projects                                                                                                                                                                                |
+| `npm test`              | Run the vitest suite (unit + integration)                                                                                                                                                                                           |
+| `npm run lint`          | ESLint over `src/`, `test/` and `scripts/`                                                                                                                                                                                          |
+| `npm run format`        | Prettier (also `format:check` for CI)                                                                                                                                                                                               |
+| `npm run icons`         | Regenerate `build/icon.*` from `scripts/make-icon.py`                                                                                                                                                                               |
+| `npm run dist:win`      | Package a Windows NSIS installer                                                                                                                                                                                                    |
+| `npm run dist:mac`      | Package macOS DMGs (x64 + arm64)                                                                                                                                                                                                    |
+| `npm run dist:linux`    | Package a Linux AppImage and .deb                                                                                                                                                                                                   |
+| `npm run dist:all`      | All three targets at once (on the host that can build them)                                                                                                                                                                         |
 
 Packaging for a platform must be run **on that platform** (or via CI, see below).
 
@@ -106,7 +117,7 @@ schema stays `doc → page → blocks` either way:
 - Settings (`notionMode`, `theme`, `sidebarOpen`, `toolbarPinned`) persist to
   `userData/settings.json` via `settings:get` / `settings:set` IPC.
 - Workspace pages live in `userData/workspace/`: `pages.json` (metadata:
-  id / title / icon / parentId / order) plus one `<id>.json` per page holding
+  id / title / icon / cover / parentId / order) plus one `<id>.json` per page holding
   the same document JSON the .docx exporter consumes. Deleting a page moves its
   file to `workspace/.trash/`, where the sidebar Trash section offers Restore /
   Delete-forever. Page edits autosave 600 ms after the last
@@ -115,7 +126,10 @@ schema stays `doc → page → blocks` either way:
 - To-do / callout / quote / divider / code-block round-trip through .docx via
   custom style ids (`FwTaskItem`, `FwCallout`, …) plus visual fallbacks
   (☐/☑ glyphs, shading, Consolas), so they survive re-saving in Word itself as
-  readable, if plainer, paragraphs.
+  readable, if plainer, paragraphs. Toggles export the same way (`FwToggle`
+  summary with a ▸/▾ glyph that doubles as the collapsed flag, `FwToggleBody`
+  for the rest); the table-of-contents node exports as `FwToc`-tagged heading
+  paragraphs and re-hydrates into one live TOC node on import.
 
 ## Troubleshooting
 
@@ -230,7 +244,8 @@ src/
         extensions.ts  Tiptap schema (custom doc → page → blocks)
         schema.ts      doc / page / pageBreak nodes (doc attrs: page setup,
                        header/footer text, trackChanges flag, comment store)
-        blocks.ts      task lists, callout, quote, divider, code block
+        blocks.ts      task lists, callout, quote, divider, code block,
+                       toggle list, table of contents
         footnotes.ts   footnoteRef inline atom + page-end note area
         review.ts      tracked-insert / tracked-delete marks + capture plugin
         comments.ts    the comment mark + thread store helpers
@@ -242,8 +257,9 @@ src/
                        reserves the header/footer bands' height)
         create-editor.ts
       features/      toolbar, slash menu, bubble toolbar, block handle,
-                     sidebar, quick switcher, status bar, page-setup modal,
-                     find-replace panel, header-footer modal, comments panel,
+                     sidebar, page hero (cover/icon/title), quick switcher,
+                     status bar, page-setup modal, find-replace panel,
+                     header-footer modal, comments panel,
                      prompt/alert/confirm modals, zoom, image insert, link clicks,
                      appearance (Notion mode / theme)
       io/

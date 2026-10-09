@@ -493,6 +493,220 @@ body[data-theme="dark"] .fw-page [data-resize-handle] {
   line-height: 1.4;
 }
 
+/* Toggle (collapsible block, see blocks.ts): caret column + content column.
+ * The collapse is a node attribute; the hidden body is pure CSS. */
+.fw-page .fw-toggle {
+  display: flex;
+  gap: 2px;
+  align-items: flex-start;
+  margin: 0 0 6pt;
+}
+
+.fw-page .fw-toggle-caret {
+  flex-shrink: 0;
+  width: 20px;
+  padding-top: 0.15em;
+  cursor: pointer;
+  user-select: none;
+  color: #6b6b6b;
+  font-size: 0.9em;
+  line-height: 1.4;
+  border-radius: 3px;
+  text-align: center;
+}
+
+.fw-page .fw-toggle-caret:hover {
+  background: #eceae7;
+}
+
+.fw-page .fw-toggle-caret::before {
+  content: "▾";
+  display: inline-block;
+  transition: transform 0.12s ease;
+}
+
+.fw-page .fw-toggle[data-collapsed="true"] .fw-toggle-caret::before {
+  content: "▸";
+}
+
+.fw-page .fw-toggle-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.fw-page .fw-toggle[data-collapsed="true"] .fw-toggle-content > :not(:first-child) {
+  display: none;
+}
+
+body[data-theme="dark"].notion-mode .fw-page .fw-toggle-caret:hover {
+  background: #333;
+}
+
+/* Table of contents (blocks.ts): the entries are rendered by a NodeView. */
+.fw-page .fw-toc {
+  border: 1px solid #e6e4e1;
+  border-radius: 6px;
+  background: #fbfbfa;
+  padding: 8pt 10pt;
+  margin: 0 0 6pt;
+}
+
+body[data-theme="dark"].notion-mode .fw-page .fw-toc {
+  border-color: #3a3a3a;
+  background: #242424;
+}
+
+.fw-page .fw-toc-title {
+  font-weight: 600;
+  font-size: 0.85em;
+  color: #6b6b6b;
+  margin-bottom: 6px;
+  letter-spacing: 0.02em;
+}
+
+.fw-page .fw-toc-item {
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  color: inherit;
+}
+
+.fw-page .fw-toc-item:hover {
+  background: #eceae7;
+  text-decoration: underline;
+}
+
+.fw-page .fw-toc-empty {
+  color: #9a9a9a;
+  font-style: italic;
+  font-size: 0.9em;
+}
+
+body[data-theme="dark"].notion-mode .fw-page .fw-toc-item:hover {
+  background: #333;
+}
+
+/* ------------------------------------------------------------------ */
+/* Page hero (workspace page cover / icon / title — page-hero.ts)      */
+/*                                                                     */
+/* Notion mode + workspace page only: Word mode and print keep their   */
+/* plain document, because the cover lives in page metadata, not in    */
+/* the document JSON.                                                  */
+/* ------------------------------------------------------------------ */
+#fw-page-hero {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 auto;
+  position: relative;
+  user-select: none;
+}
+
+body:not(.notion-mode) #fw-page-hero {
+  display: none;
+}
+
+#fw-page-hero .hero-cover {
+  position: relative;
+  width: 100%;
+  height: 168px;
+  margin-bottom: 14px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #e8eaed;
+}
+
+#fw-page-hero .hero-cover-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  pointer-events: none;
+}
+
+#fw-page-hero .hero-cover-actions {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  gap: 6px;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+#fw-page-hero .hero-cover:hover .hero-cover-actions {
+  opacity: 1;
+}
+
+#fw-page-hero .hero-cover-actions button,
+#fw-page-hero .hero-add-cover {
+  font: inherit;
+  font-size: 12px;
+  color: #37352f;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+#fw-page-hero .hero-cover-actions button:hover,
+#fw-page-hero .hero-add-cover:hover {
+  background: #ffffff;
+}
+
+body[data-theme="dark"] #fw-page-hero .hero-cover-actions button,
+body[data-theme="dark"] #fw-page-hero .hero-add-cover {
+  color: #d4d4d4;
+  background: rgba(40, 40, 40, 0.92);
+  border-color: #444;
+}
+
+#fw-page-hero .hero-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#fw-page-hero .hero-icon {
+  font: inherit;
+  font-size: 44px;
+  line-height: 1.2;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  padding: 2px 8px;
+  margin-left: -8px;
+  cursor: pointer;
+}
+
+#fw-page-hero .hero-icon:hover {
+  background: #eceae7;
+}
+
+body[data-theme="dark"] #fw-page-hero .hero-icon:hover {
+  background: #333;
+}
+
+#fw-page-hero .hero-title {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 34px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--nw-text, #37352f);
+  padding: 2px 0 10px;
+  margin-bottom: 8px;
+}
+
+#fw-page-hero .hero-title::placeholder {
+  color: #b4b4b4;
+}
+
 /* ------------------------------------------------------------------ */
 /* Slash menu / bubble toolbar / block handle                          */
 /* ------------------------------------------------------------------ */

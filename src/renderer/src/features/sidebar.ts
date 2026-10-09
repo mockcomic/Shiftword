@@ -19,6 +19,7 @@ export interface SidebarHandlers {
   onNewPage(parentId: string | null): void;
   onRename(id: string): void;
   onSetIcon(id: string): void;
+  onDuplicate(id: string): void;
   onDelete(id: string): void;
   onMove(id: string, parentId: string | null, order: number): void;
   onQuickSwitcher(): void;
@@ -303,6 +304,13 @@ export function createSidebar(handlers: SidebarHandlers): Sidebar {
         () => {
           closeRowMenu();
           handlers.onNewPage(page.id);
+        },
+      ],
+      [
+        "⧉ Duplicate",
+        () => {
+          closeRowMenu();
+          handlers.onDuplicate(page.id);
         },
       ],
       [

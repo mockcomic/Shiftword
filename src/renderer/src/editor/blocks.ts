@@ -2,7 +2,7 @@ import { mergeAttributes, Node } from "@tiptap/core";
 import { InputRule } from "@tiptap/core";
 import type { Node as PMNode, Schema } from "@tiptap/pm/model";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
-import type { EditorView } from "@tiptap/pm/view";
+import type { EditorView, NodeView } from "@tiptap/pm/view";
 
 /**
  * Notion-style block primitives, hand-rolled in the repo's existing pattern
@@ -21,6 +21,8 @@ const CALLOUT = "callout";
 const QUOTE = "fwQuote";
 const DIVIDER = "divider";
 const CODE_BLOCK = "fwCodeBlock";
+const TOGGLE = "fwToggle";
+const TOC = "fwToc";
 
 /** Icons the user cycles through by clicking a callout's icon. */
 export const CALLOUT_ICONS = ["💡", "ℹ️", "⚠️", "✅", "❗", "📌"] as const;
@@ -33,6 +35,8 @@ export const BLOCK_NODE_NAMES = {
   quote: QUOTE,
   divider: DIVIDER,
   codeBlock: CODE_BLOCK,
+  toggle: TOGGLE,
+  toc: TOC,
 } as const;
 
 // ---------------------------------------------------------------------------
@@ -201,10 +205,7 @@ export const TaskItem = Node.create({
       const beforeFrag = para.content.cut(0, $from.parentOffset);
       const afterFrag = para.content.cut($from.parentOffset, para.content.size);
       const prevItem = item.type.create({ ...item.attrs }, para.type.create(null, beforeFrag));
-      const nextItem = item.type.create(
-        { ...item.attrs, checked: false },
-        para.type.create(null, afterFrag),
-      );
+      const nextItem = item.type.create({ ...item.attrs, checked: false }, para.type.create(null, afterFrag));
       const tr = state.tr.replaceWith(itemPos, itemPos + item.nodeSize, [prevItem, nextItem]);
       const nextStart = itemPos + prevItem.nodeSize + 1;
       tr.setSelection(TextSelection.near(tr.doc.resolve(nextStart)));
@@ -463,5 +464,254 @@ export const CodeBlock = Node.create({
         return editor.commands.insertContent("  ");
       },
     };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Toggle (collapsible block)
+// ---------------------------------------------------------------------------
+
+/**
+ * Notion's toggle: the first block is the always-visible summary, everything
+ * after it collapses behind the caret. The collapse is a node attribute (not
+ * a NodeView), so the caret click rides the same undo/save path as the
+ * task-list checkbox, and the hidden body is pure CSS.
+ */
+export const Toggle = Node.create({
+  name: TOGGLE,
+  group: "block",
+  content: "block+",
+
+  addAttributes() {
+    return {
+      collapsed: {
+        default: false,
+        parseHTML: (element: HTMLElement) => element.getAttribute("data-collapsed") === "true",
+        renderHTML: (attrs: { collapsed?: boolean }) => ({
+          "data-collapsed": attrs.collapsed ? "true" : "false",
+        }),
+      },
+    };
+  },
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      "div",
+      mergeAttributes(HTMLAttributes, { class: "fw-toggle", "data-type": TOGGLE }),
+      ["span", { class: "fw-toggle-caret", contenteditable: "false" }],
+      ["div", { class: "fw-toggle-content" }, 0],
+    ];
+  },
+
+  parseHTML() {
+    return [{ tag: `div[data-type="${TOGGLE}"]`, priority: 60 }];
+  },
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey("fwToggleCollapse"),
+        props: {
+          handleDOMEvents: {
+            click: (view, event) => {
+              const target = event.target as HTMLElement | null;
+              const caret = target?.closest?.(".fw-toggle-caret") as HTMLElement | null;
+              if (!caret) return false;
+              event.preventDefault();
+              const box = caret.closest(`div[data-type="${TOGGLE}"]`) as HTMLElement | null;
+              if (!box) return false;
+              const pos = posOfRenderedNode(view, TOGGLE, box);
+              if (pos === null) return false;
+              const node = view.state.doc.nodeAt(pos);
+              if (!node) return false;
+              view.dispatch(
+                view.state.tr.setNodeMarkup(pos, undefined, {
+                  ...node.attrs,
+                  collapsed: !node.attrs.collapsed,
+                }),
+              );
+              return true;
+            },
+          },
+        },
+      }),
+    ];
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Table of contents
+// ---------------------------------------------------------------------------
+
+/** Live-mounted TOC node views; the plugin below refreshes them per dispatch. */
+const tocViews = new Set<TocNodeView>();
+
+interface TocEntry {
+  pos: number;
+  level: number;
+  text: string;
+}
+
+/** Every heading in document order (the TOC's own subtree never qualifies). */
+function collectHeadings(doc: PMNode): TocEntry[] {
+  const out: TocEntry[] = [];
+  doc.descendants((node, pos) => {
+    if (node.type.name === "heading") {
+      out.push({
+        pos,
+        level: Math.min(3, Math.max(1, Number(node.attrs.level) || 1)),
+        text: node.textContent.trim(),
+      });
+      return false;
+    }
+    return true;
+  });
+  return out;
+}
+
+/**
+ * The TOC renders its heading list through a NodeView (the document stores
+ * only the marker node), so the entries can never drift from the headings —
+ * there is nothing to sync. The node's `renderHTML` is the static fallback
+ * used by the HTML exporter and non-rendered parses.
+ */
+class TocNodeView implements NodeView {
+  dom: HTMLElement;
+  private listEl: HTMLElement;
+  private entries: TocEntry[] = [];
+
+  constructor(
+    private node: PMNode,
+    private view: EditorView,
+  ) {
+    this.dom = document.createElement("div");
+    this.dom.className = "fw-toc";
+    this.dom.setAttribute("data-type", TOC);
+    const title = document.createElement("div");
+    title.className = "fw-toc-title";
+    title.textContent = "Table of contents";
+    this.listEl = document.createElement("div");
+    this.listEl.className = "fw-toc-list";
+    this.listEl.addEventListener("click", (event) => this.jump(event));
+    this.dom.append(title, this.listEl);
+    this.refresh();
+  }
+
+  stopEvent(): boolean {
+    return false;
+  }
+
+  // The DOM inside the list is ours, not ProseMirror's — never re-parse it.
+  ignoreMutation(): boolean {
+    return true;
+  }
+
+  selectNode(): void {
+    this.dom.classList.add("ProseMirror-selectednode");
+  }
+
+  deselectNode(): void {
+    this.dom.classList.remove("ProseMirror-selectednode");
+  }
+
+  update(node: PMNode): boolean {
+    if (node.type !== this.node.type) return false;
+    this.node = node;
+    this.refresh();
+    return true;
+  }
+
+  destroy(): void {
+    tocViews.delete(this);
+  }
+
+  /** Rebuild the entry list from the live document. */
+  refresh(): void {
+    this.entries = collectHeadings(this.view.state.doc);
+    this.listEl.replaceChildren(
+      ...(this.entries.length === 0
+        ? [
+            Object.assign(document.createElement("div"), {
+              className: "fw-toc-empty",
+              textContent: "No headings yet",
+            }),
+          ]
+        : this.entries.map((entry) => {
+            const row = document.createElement("div");
+            row.className = "fw-toc-item";
+            row.style.paddingLeft = `${(entry.level - 1) * 14}px`;
+            row.textContent = entry.text || "Untitled heading";
+            row.title = row.textContent ?? "";
+            return row;
+          })),
+    );
+  }
+
+  private jump(event: Event): void {
+    const row = (event.target as HTMLElement | null)?.closest?.(".fw-toc-item") as HTMLElement | null;
+    if (!row) return;
+    event.preventDefault();
+    const index = Array.from(this.listEl.children).indexOf(row);
+    const entry = this.entries[index];
+    if (!entry) return;
+    try {
+      // Re-locate by position against the CURRENT doc (an entry may have been
+      // edited since the last refresh); fall back to the text match.
+      const target =
+        (this.view.nodeDOM(entry.pos) as HTMLElement | null) ?? this.findHeadingDom(entry.text, index);
+      target?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch {
+      /* detached view — jump is a nicety, never a crash */
+    }
+  }
+
+  private findHeadingDom(text: string, index: number): HTMLElement | null {
+    const entries = collectHeadings(this.view.state.doc);
+    const match = entries.find((e) => e.text === text) ?? entries[index];
+    return match ? ((this.view.nodeDOM(match.pos) as HTMLElement | null) ?? null) : null;
+  }
+}
+
+export const TableOfContents = Node.create({
+  name: TOC,
+  group: "block",
+  atom: true,
+  draggable: false,
+
+  renderHTML({ HTMLAttributes }) {
+    return [
+      "div",
+      mergeAttributes(HTMLAttributes, { class: "fw-toc", "data-type": TOC }),
+      ["div", { class: "fw-toc-title" }, "Table of contents"],
+    ];
+  },
+
+  parseHTML() {
+    return [{ tag: `div[data-type="${TOC}"]`, priority: 70 }];
+  },
+
+  addNodeView() {
+    return ({ node, view }) => {
+      const tocView = new TocNodeView(node, view);
+      tocViews.add(tocView);
+      return tocView;
+    };
+  },
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey("fwTocRefresh"),
+        view: () => ({
+          update: (view, prevState) => {
+            // The headings the list mirrors can change while the TOC node
+            // itself is untouched (identical node object → no `update` call),
+            // so every document-changing dispatch re-renders the mounted lists.
+            if (view.state.doc === prevState.doc) return;
+            for (const tocView of tocViews) tocView.refresh();
+          },
+        }),
+      }),
+    ];
   },
 });

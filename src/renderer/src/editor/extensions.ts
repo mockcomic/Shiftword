@@ -22,7 +22,7 @@ import { Code } from "./code";
 import { Cursors } from "./cursors";
 import { HardBreak } from "./hard-break";
 import { Link } from "./link";
-import { Callout, CodeBlock, Divider, Quote, TaskItem, TaskList } from "./blocks";
+import { Callout, CodeBlock, Divider, Quote, TableOfContents, TaskItem, TaskList, Toggle } from "./blocks";
 import { FootnoteRef } from "./footnotes";
 import { TrackedDelete, TrackedInsert, ReviewTracking } from "./review";
 import { CommentMarkExtension } from "./comments";
@@ -131,13 +131,17 @@ export function createExtensions() {
     ListItem,
     // Notion-style blocks (see blocks.ts): to-do lists, callouts, quote,
     // divider and fenced code — all in the `block` group, so the page node
-    // accepts them without a schema change.
+    // accepts them without a schema change. The toggle collapses its body
+    // behind a caret, and the table of contents renders the document's
+    // headings through a live NodeView.
     TaskList,
     TaskItem,
     Callout,
     Quote,
     Divider,
     CodeBlock,
+    Toggle,
+    TableOfContents,
     // Feature set: footnotes (inline atom + page-end note area), Word-style
     // comments (mark + doc-attr store) and track changes (marks + capture
     // plugin). All of them live in the document JSON — see schema.ts.

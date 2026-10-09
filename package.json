@@ -9,6 +9,8 @@
   "scripts": {
     "dev": "node scripts/run-electron-safe.mjs electron-vite dev",
     "dev:nosandbox": "node scripts/run-electron-safe.mjs electron-vite dev -- --no-sandbox",
+    "start": "node scripts/run-app.mjs",
+    "start:nosandbox": "node scripts/run-app.mjs --no-sandbox",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",

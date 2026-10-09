@@ -196,6 +196,14 @@ export const BLOCK_DEFS: BlockDef[] = [
       }),
   },
   {
+    id: "toggle",
+    label: "Toggle list",
+    icon: "▸",
+    keywords: "toggle collapsible expand collapse dropdown details",
+    // First block is the summary; everything after it hides behind the caret.
+    apply: simpleBlock(BLOCK_NODE_NAMES.toggle),
+  },
+  {
     id: "quote",
     label: "Quote",
     icon: "❝",
@@ -229,6 +237,18 @@ export const BLOCK_DEFS: BlockDef[] = [
     apply: (editor) =>
       replaceTopBlock(editor, "", (ed) => {
         const type = ed.state.schema.nodes[BLOCK_NODE_NAMES.divider];
+        return type ? [type.create()] : null;
+      }),
+  },
+  {
+    id: "toc",
+    label: "Table of contents",
+    icon: "☰",
+    keywords: "toc contents outline headings index navigation",
+    // The node renders the document's headings itself; nothing to type in.
+    apply: (editor) =>
+      replaceTopBlock(editor, "", (ed) => {
+        const type = ed.state.schema.nodes[BLOCK_NODE_NAMES.toc];
         return type ? [type.create()] : null;
       }),
   },
@@ -273,7 +293,7 @@ export function filterBlockDefs(defs: BlockDef[], query: string): BlockDef[] {
 /** The block types offered for "Turn into" (excludes insert-only specials). */
 export function turnIntoDefs(): BlockDef[] {
   return BLOCK_DEFS.filter(
-    (d) => !d.wordOnly && d.id !== "table" && d.id !== "divider" && d.id !== "image",
+    (d) => !d.wordOnly && d.id !== "table" && d.id !== "divider" && d.id !== "image" && d.id !== "toc",
   ).map((def) => ({
     ...def,
     // Turn-into always converts the existing text, never appends.

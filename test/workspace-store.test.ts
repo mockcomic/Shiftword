@@ -118,6 +118,48 @@ describe("workspace store", () => {
     expect(res.error).toMatch(/cycle|itself/);
   });
 
+  it("persists a cover data URL and clears it with null", async () => {
+    const meta = (await ws.createPage({ title: "Covered" }))!;
+    const cover = "data:image/png;base64,AAAA";
+    expect((await ws.renamePage(meta.id, { cover }))?.cover).toBe(cover);
+    expect((await ws.listPages()).find((p) => p.id === meta.id)?.cover).toBe(cover);
+    expect((await ws.readPage(meta.id))?.meta.cover).toBe(cover);
+    // Not a data URL → refused, the previous cover survives.
+    expect((await ws.renamePage(meta.id, { cover: "https://evil.example/x.png" }))?.cover).toBe(cover);
+    expect((await ws.renamePage(meta.id, { cover: null }))?.cover).toBeNull();
+  });
+
+  it("duplicates a page and its whole subtree with fresh ids", async () => {
+    const parent = (await ws.createPage({ title: "Guide" }))!;
+    const child = (await ws.createPage({ title: "Sub", parentId: parent.id }))!;
+    const doc = {
+      type: "doc",
+      attrs: {},
+      content: [
+        { type: "page", content: [{ type: "paragraph", content: [{ type: "text", text: "deep copy me" }] }] },
+      ],
+    };
+    await ws.writePage(child.id, doc);
+    await ws.renamePage(parent.id, { cover: "data:image/png;base64,Q==" });
+
+    const res = await ws.duplicatePage(parent.id);
+    expect(res.error).toBeUndefined();
+    const copy = res.meta!;
+    expect(copy.title).toBe("Guide (copy)");
+    expect(copy.parentId).toBeNull();
+    expect(copy.cover).toBe("data:image/png;base64,Q==");
+
+    const pages = await ws.listPages();
+    const copyChild = pages.find((p) => p.parentId === copy.id && p.title === "Sub");
+    expect(copyChild).toBeTruthy();
+    expect(copyChild!.id).not.toBe(child.id);
+    expect(JSON.stringify((await ws.readPage(copyChild!.id))?.json)).toContain("deep copy me");
+
+    // The original is untouched, and an unknown id errors instead of throwing.
+    expect(await ws.readPage(child.id)).toBeTruthy();
+    expect((await ws.duplicatePage("../evil")).error).toBeTruthy();
+  });
+
   it("deletes a subtree into .trash", async () => {
     const parent = (await ws.createPage({ title: "Branch" }))!;
     const child = (await ws.createPage({ title: "Leaf", parentId: parent.id }))!;
@@ -290,5 +332,21 @@ describe("page IPC handlers", () => {
     for (let i = 0; i < 5; i++) await call("page:create", { title: `P${i}` });
     const raw = await readFile(join(userDataDir, "workspace", "pages.json"), "utf8");
     expect(() => JSON.parse(raw)).not.toThrow();
+  });
+
+  it("duplicates through the bridge (page:duplicate)", async () => {
+    const meta = (await call("page:create", { title: "Dup via IPC" })) as { id: string };
+    const res = (await call("page:duplicate", meta.id)) as { meta?: { title: string }; error?: string };
+    expect(res.error).toBeUndefined();
+    expect(res.meta?.title).toBe("Dup via IPC (copy)");
+    const listed = (await call("page:list")) as Array<{ title: string }>;
+    expect(listed.map((p) => p.title)).toEqual(expect.arrayContaining(["Dup via IPC", "Dup via IPC (copy)"]));
+    const rogue = (await handlers.get("page:duplicate")!(
+      {
+        senderFrame: { id: "rogue" },
+      },
+      "p-abc-1",
+    )) as { error?: string };
+    expect(rogue.error).toBeTruthy();
   });
 });

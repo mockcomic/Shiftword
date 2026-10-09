@@ -147,6 +147,21 @@ export interface PageMeta {
   parentId: string | null;
   order: number;
   updatedAt: number;
+  /**
+   * Notion-style page cover: a `data:image/...` URL rendered as the banner
+   * above the page hero. Kept in the metadata (not the document JSON) so the
+   * .docx export of the same content stays clean.
+   */
+  cover?: string | null;
+}
+
+/** Upper bound for a cover data URL (a few thousand chars of base64 overhead
+ *  on top of the ~4 MB image the picker accepts). */
+export const MAX_COVER_CHARS = 6_000_000;
+
+/** Whether a candidate cover string is storable (shape + size). */
+export function isStorableCover(value: unknown): value is string {
+  return typeof value === "string" && value.startsWith("data:image/") && value.length <= MAX_COVER_CHARS;
 }
 
 /** A page plus its document JSON (`readPage` answer / write payload). */
@@ -203,10 +218,15 @@ export interface FwApi {
   writePage(id: string, json: Record<string, unknown>): Promise<{ error?: string }>;
   /** Create a page (optionally under `parentId`); null when the write failed. */
   createPage(opts?: { title?: string; parentId?: string | null }): Promise<PageMeta | null>;
-  /** Rename a page / change its icon. */
-  renamePage(id: string, patch: { title?: string; icon?: string }): Promise<PageMeta | null>;
+  /** Rename a page / change its icon / set or clear its cover image. */
+  renamePage(
+    id: string,
+    patch: { title?: string; icon?: string; cover?: string | null },
+  ): Promise<PageMeta | null>;
   /** Re-parent and/or re-order a page (sidebar drag). */
   movePage(id: string, parentId: string | null, order: number): Promise<{ error?: string }>;
+  /** Deep-copy a page and its subtree; returns the copy's metadata. */
+  duplicatePage(id: string): Promise<{ meta?: PageMeta; error?: string }>;
   /** Delete a page — moved to the workspace trash, not erased. */
   deletePage(id: string): Promise<{ error?: string }>;
   /** Deleted pages, newest first — the trash the sidebar offers to restore. */

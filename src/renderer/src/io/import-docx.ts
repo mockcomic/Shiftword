@@ -160,6 +160,18 @@ function isQuotePara(el: HTMLElement): boolean {
   return hasClass(el, "docx_fwquote");
 }
 
+function isToggleHeadPara(el: HTMLElement): boolean {
+  return hasClass(el, "docx_fwtoggle") || /^(▸|▾)\s/.test((el.textContent ?? "").trimStart());
+}
+
+function isToggleBodyPara(el: HTMLElement): boolean {
+  return hasClass(el, "docx_fwtogglebody");
+}
+
+function isTocPara(el: HTMLElement): boolean {
+  return hasClass(el, "docx_fwtoc");
+}
+
 function isCodePara(el: HTMLElement): boolean {
   if (hasClass(el, "docx_fwcodeblock")) return true;
   if (bg(el) !== hexToRgbCss(CODE_FILL)) return false;
@@ -323,6 +335,59 @@ export function convertFwBlockSignatures(root: HTMLElement): void {
     pre.textContent = run.map((p) => (p.textContent ?? "").replace(/\u00a0/g, " ")).join("\n");
     run.forEach((p) => p.remove());
     parent?.insertBefore(pre, anchor);
+  }
+
+  // Toggles: a FwToggle summary paragraph (▸/▾ glyph carries the collapsed
+  // flag when style ids survive a third-party re-save as well), absorbing
+  // the immediately following FwToggleBody paragraphs into the body.
+  for (const head of paragraphs().filter(isToggleHeadPara)) {
+    if (!head.parentElement) continue;
+    const body: HTMLElement[] = [];
+    let cursor: Node | null = head.nextSibling;
+    while (cursor) {
+      if (cursor.nodeType === Node.TEXT_NODE && !(cursor.textContent ?? "").trim()) {
+        cursor = cursor.nextSibling;
+        continue;
+      }
+      if (cursor.nodeType === Node.ELEMENT_NODE && isToggleBodyPara(cursor as HTMLElement)) {
+        body.push(cursor as HTMLElement);
+        cursor = cursor.nextSibling;
+        continue;
+      }
+      break;
+    }
+    const text = (head.textContent ?? "").trimStart();
+    const glyph = text.startsWith("▸") || text.startsWith("▾") ? text.slice(0, 1) : undefined;
+    const collapsed = glyph === "▸" || head.getAttribute("data-collapsed") === "true";
+    const box = document.createElement("div");
+    box.setAttribute("data-type", "fwToggle");
+    box.className = "fw-toggle";
+    box.setAttribute("data-collapsed", collapsed ? "true" : "false");
+    const caret = document.createElement("span");
+    caret.className = "fw-toggle-caret";
+    caret.setAttribute("contenteditable", "false");
+    const content = document.createElement("div");
+    content.className = "fw-toggle-content";
+    box.append(caret, content);
+    content.appendChild(cleanParagraphFrom(head, glyph ? `${glyph} ` : glyph));
+    for (const p of body) {
+      content.appendChild(cleanParagraphFrom(p));
+      p.remove();
+    }
+    head.parentElement.insertBefore(box, head);
+    head.remove();
+  }
+
+  // Table of contents: a run of FwToc paragraphs collapses into one marker
+  // node — the editor re-renders the live heading list from the document.
+  for (const run of findRuns(paragraphs().filter(isTocPara), (a, b) => isTocPara(a) && isTocPara(b))) {
+    const parent = run[0].parentElement;
+    const anchor = run[run.length - 1].nextSibling;
+    const box = document.createElement("div");
+    box.setAttribute("data-type", "fwToc");
+    box.className = "fw-toc";
+    run.forEach((p) => p.remove());
+    parent?.insertBefore(box, anchor);
   }
 }
 

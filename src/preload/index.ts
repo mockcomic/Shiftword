@@ -35,10 +35,12 @@ const api: FwApi = {
     ipcRenderer.invoke("page:write", id, json) as Promise<{ error?: string }>,
   createPage: (opts?: { title?: string; parentId?: string | null }) =>
     ipcRenderer.invoke("page:create", opts) as Promise<PageMeta | null>,
-  renamePage: (id: string, patch: { title?: string; icon?: string }) =>
+  renamePage: (id: string, patch: { title?: string; icon?: string; cover?: string | null }) =>
     ipcRenderer.invoke("page:rename", id, patch) as Promise<PageMeta | null>,
   movePage: (id: string, parentId: string | null, order: number) =>
     ipcRenderer.invoke("page:move", id, parentId, order) as Promise<{ error?: string }>,
+  duplicatePage: (id: string) =>
+    ipcRenderer.invoke("page:duplicate", id) as Promise<{ meta?: PageMeta; error?: string }>,
   deletePage: (id: string) => ipcRenderer.invoke("page:delete", id) as Promise<{ error?: string }>,
   listTrash: () => ipcRenderer.invoke("page:trashList") as Promise<TrashEntry[]>,
   restoreTrash: (file: string) =>

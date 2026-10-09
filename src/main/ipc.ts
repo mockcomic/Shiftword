@@ -12,6 +12,7 @@ import {
   createPage,
   deletePage,
   deleteTrash,
+  duplicatePage,
   listPages,
   listTrash,
   movePage,
@@ -59,7 +60,7 @@ function samePathKey(p: string): string {
 async function isUserChosenPath(filePath: string, ext: string): Promise<boolean> {
   if (!path.isAbsolute(filePath)) return false;
   const fileExt = path.extname(filePath).toLowerCase().replace(/^\./, "") || ext;
-  const allowedExts = ext === "docx" ? ["docx"] : RAW_FORMATS[ext as "txt" | "html"]?.extensions ?? [ext];
+  const allowedExts = ext === "docx" ? ["docx"] : (RAW_FORMATS[ext as "txt" | "html"]?.extensions ?? [ext]);
   if (!allowedExts.includes(fileExt)) return false;
   if (issuedPaths.has(samePathKey(filePath))) return true;
   const recents = await readRecent();
@@ -148,7 +149,10 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
     // Check the size BEFORE buffering: without this a 2 GB file is read (and
     // then structured-cloned over IPC) only to be rejected at the cap.
     const st = await stat(filePath).catch((err: unknown) => {
-      dialog.showErrorBox("Could not open file", `"${path.basename(filePath!)}" could not be read:\n${messageOf(err)}`);
+      dialog.showErrorBox(
+        "Could not open file",
+        `"${path.basename(filePath!)}" could not be read:\n${messageOf(err)}`,
+      );
       return null;
     });
     if (!st) return null;
@@ -463,9 +467,16 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
     const parentId = typeof opts?.parentId === "string" ? opts.parentId : null;
     return createPage({ title, parentId });
   });
-  ipcMain.handle("page:rename", async (event, id: unknown, patch?: { title?: string; icon?: string }) => {
-    if (!trustedSender(event, getWindow) || typeof id !== "string") return null;
-    return renamePage(id, patch ?? {});
+  ipcMain.handle(
+    "page:rename",
+    async (event, id: unknown, patch?: { title?: string; icon?: string; cover?: string | null }) => {
+      if (!trustedSender(event, getWindow) || typeof id !== "string") return null;
+      return renamePage(id, patch ?? {});
+    },
+  );
+  ipcMain.handle("page:duplicate", async (event, id: unknown) => {
+    if (!trustedSender(event, getWindow) || typeof id !== "string") return { error: "Untrusted sender." };
+    return duplicatePage(id);
   });
   ipcMain.handle("page:move", async (event, id: unknown, parentId: unknown, order: unknown) => {
     if (!trustedSender(event, getWindow) || typeof id !== "string") return { error: "Untrusted sender." };

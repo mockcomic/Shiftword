@@ -1,7 +1,12 @@
 import type { Editor } from "@tiptap/core";
 import type { AppSettings, FwApi, Theme } from "../../../shared/types";
 import { DEFAULT_SETTINGS } from "../../../shared/types";
-import { runPagination, schedulePaginate, setPaginationPaused } from "../editor/pagination";
+import {
+  invalidateMeasureCache,
+  runPagination,
+  schedulePaginate,
+  setPaginationPaused,
+} from "../editor/pagination";
 import { syncToolbar } from "./toolbar";
 import { updateStatus } from "./statusbar";
 
@@ -37,6 +42,9 @@ export function applyAppearance(): void {
   body.classList.toggle("sidebar-open", settings.sidebarOpen);
   body.dataset.theme = resolvedTheme();
   body.dataset.uiMode = notion ? "notion" : "word";
+  // A theme or mode swap changes fonts and page geometry — cached block
+  // heights from the old appearance must not steer the new pagination.
+  invalidateMeasureCache();
   setPaginationPaused(notion);
   if (!notion && editorRef && !editorRef.isDestroyed) {
     // Back in Word mode: the pages were never re-partitioned while hidden,

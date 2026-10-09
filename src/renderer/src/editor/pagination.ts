@@ -3,6 +3,7 @@ import { Fragment, Slice } from "@tiptap/pm/model";
 import type { Node as PMNode } from "@tiptap/pm/model";
 import { AllSelection, NodeSelection, TextSelection } from "@tiptap/pm/state";
 import type { Selection } from "@tiptap/pm/state";
+import { FW_FOOTER_RESERVE_PX, FW_HEADER_RESERVE_PX } from "./schema";
 
 /**
  * Pagination engine: content must fit exactly one page per `page` node.
@@ -168,6 +169,40 @@ export function blockPositionsOfPage(
   return out;
 }
 
+/**
+ * Measured-height cache keyed by the *node object*.
+ *
+ * ProseMirror nodes are immutable and reused by identity in every state
+ * that did not touch them, so one full-document measurement pass (the old
+ * per-keystroke cost: a forced-layout `getBoundingClientRect` per block,
+ * every frame, every settle-loop pass) becomes "measure the blocks that
+ * are new, reuse the heights of everything else". Block width is the same
+ * on every page, so a node's height only depends on the node — until
+ * something that reflows the whole document changes: zoom, theme/fonts or
+ * the window. Those call `invalidateMeasureCache`.
+ */
+let heightCache = new WeakMap<PMNode, number>();
+
+export function invalidateMeasureCache(): void {
+  heightCache = new WeakMap();
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("resize", () => invalidateMeasureCache());
+}
+
+function measureBlockHeight(el: HTMLElement): number {
+  // `getBoundingClientRect().height` excludes CSS margins — but the blocks
+  // carry a real `margin: 0 0 6pt` (typography.ts), and ignoring it made
+  // every page overfill by ~8px per block against the 2px tolerance.
+  const rect = el.getBoundingClientRect();
+  let h = rect.height;
+  const cs = getComputedStyle(el);
+  h += parseFloat(cs.marginTop) || 0;
+  h += parseFloat(cs.marginBottom) || 0;
+  return h;
+}
+
 function measurePages(editor: Editor): { pages: PageMeasure[]; contentHeight: number } | null {
   const { view, state } = editor;
   const doc = state.doc;
@@ -182,11 +217,23 @@ function measurePages(editor: Editor): { pages: PageMeasure[]; contentHeight: nu
       const padTop = parseFloat(cs.paddingTop) || 0;
       const padBottom = parseFloat(cs.paddingBottom) || 0;
       contentHeight = pageEl.clientHeight - padTop - padBottom;
+      // The header/footer bands render absolutely inside the page's margin
+      // padding; while they carry text, shrink the usable content box so
+      // typed blocks never flow underneath them (see schema.ts reserves).
+      const attrs = (state.doc.attrs ?? {}) as { header?: string | null; footer?: string | null };
+      if (attrs.header) contentHeight -= FW_HEADER_RESERVE_PX;
+      if (attrs.footer) contentHeight -= FW_FOOTER_RESERVE_PX;
     }
-    const blocks: BlockInfo[] = blockPositionsOfPage(pageNode, pagePos).map((b) => {
-      const el = view.nodeDOM(b.pos) as HTMLElement | null;
-      const h = el ? el.getBoundingClientRect().height : 0;
-      return { pos: b.pos, h, isPageBreak: b.isPageBreak };
+    const blocks: BlockInfo[] = [];
+    pageNode.forEach((child, childOffset) => {
+      const pos = pagePos + 1 + childOffset;
+      let h = heightCache.get(child);
+      if (h === undefined) {
+        const el = view.nodeDOM(pos) as HTMLElement | null;
+        h = el ? measureBlockHeight(el) : 0;
+        heightCache.set(child, h);
+      }
+      blocks.push({ pos, h, isPageBreak: child.type.name === "pageBreak" });
     });
     pages.push({ start: pagePos, size: pageNode.nodeSize, blocks });
   });
@@ -218,11 +265,17 @@ function makeMapper(oldPages: Range[], newPages: Range[]): (p: number) => number
   const lastOldEnd = pairs[pairs.length - 1][0];
   return (p: number): number => {
     const clamped = Math.min(p, lastOldEnd);
-    let best = pairs[0];
-    for (const pair of pairs) {
-      if (pair[0] <= clamped) best = pair;
-      else break;
+    // Binary search for the last pair with start <= clamped — the pairs are
+    // sorted, and a linear scan here is O(pages) per mapped position on a
+    // path that runs once per selection component per applied pass.
+    let lo = 0;
+    let hi = pairs.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (pairs[mid][0] <= clamped) lo = mid;
+      else hi = mid - 1;
     }
+    const best = pairs[lo];
     return best[1] + (clamped - best[0]);
   };
 }

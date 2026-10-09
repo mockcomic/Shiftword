@@ -1,13 +1,22 @@
 import {
   AlignmentType,
+  CommentRangeEnd,
+  CommentRangeStart,
+  CommentReference,
+  DeletedTextRun,
   Document,
   ExternalHyperlink,
+  Footer,
+  FootnoteReferenceRun,
+  Header,
   HeadingLevel,
   ImageRun,
+  InsertedTextRun,
   LevelFormat,
   LineRuleType,
   Packer,
   PageBreak,
+  PageNumber,
   Paragraph,
   Table,
   TableCell,
@@ -95,8 +104,97 @@ function mmToPx(mm: number): number {
   return (mm * 96) / 25.4;
 }
 
-type ParagraphChild = TextRun | ExternalHyperlink;
+type ParagraphChild =
+  | TextRun
+  | ExternalHyperlink
+  | FootnoteReferenceRun
+  | InsertedTextRun
+  | DeletedTextRun
+  | CommentRangeStart
+  | CommentRangeEnd
+  | CommentReference;
 type DocChild = Paragraph | Table;
+
+/**
+ * One-pass context computed from the whole document before any run is
+ * emitted, so ordinals are stable wherever the node appears:
+ *
+ * - `footnotes` maps each `footnoteRef` JSON node (object identity — the
+ *   same graph the renderer serialized) to its Word ordinal, which doubles
+ *   as the `word/footnotes.xml` id.
+ * - `comments` maps a comment id (the string on the `comment` mark) to a
+ *   numeric OOXML comment id; `commentDefs` carries the thread text.
+ * - `revision` numbers the `w:ins`/`w:del` ids of tracked changes.
+ */
+interface ExportContext {
+  footnotes: Map<PMNode, number>;
+  footnoteTexts: Map<number, string>;
+  comments: Map<string, number>;
+  commentDefs: Array<{
+    id: number;
+    author: string;
+    initials: string;
+    date: Date;
+    children: Paragraph[];
+  }>;
+  revision: { n: number };
+}
+
+/**
+ * The payload arrives over IPC — structured clone PRESERVES reference
+ * cycles, so a self-referential document JSON (buggy producer or hostile
+ * renderer) would otherwise recurse until the stack blows and the whole
+ * save fails with an opaque RangeError.
+ */
+const MAX_WALK_DEPTH = 256;
+
+function walkPm(node: PMNode, visit: (n: PMNode) => void, depth = 0): void {
+  if (depth > MAX_WALK_DEPTH) throw new RangeError("document JSON nests too deeply (reference cycle?)");
+  visit(node);
+  childrenOf(node).forEach((c) => walkPm(c, visit, depth + 1));
+}
+
+interface RawCommentRecord {
+  author?: string;
+  text?: string;
+  createdAt?: number;
+}
+
+function buildExportContext(doc: PMDoc): ExportContext {
+  const ctx: ExportContext = {
+    footnotes: new Map(),
+    footnoteTexts: new Map(),
+    comments: new Map(),
+    commentDefs: [],
+    revision: { n: 0 },
+  };
+  const store = (doc.attrs?.comments ?? {}) as Record<string, RawCommentRecord>;
+  const top: PMNode = { type: "doc", content: childrenOf(doc as unknown as PMNode) };
+  walkPm(top, (node) => {
+    if (node.type === "footnoteRef") {
+      const ordinal = ctx.footnotes.size + 1;
+      ctx.footnotes.set(node, ordinal);
+      ctx.footnoteTexts.set(ordinal, String(node.attrs?.text ?? ""));
+    }
+    for (const mark of node.marks ?? []) {
+      if (mark.type !== "comment") continue;
+      const id = String(mark.attrs?.id ?? "");
+      if (!id || ctx.comments.has(id)) continue;
+      const numId = ctx.comments.size + 1;
+      ctx.comments.set(id, numId);
+      const rec = store[id] ?? {};
+      const author = typeof rec.author === "string" && rec.author ? rec.author : "Unknown";
+      ctx.commentDefs.push({
+        id: numId,
+        author,
+        initials: author.slice(0, 2).toUpperCase(),
+        date: new Date(typeof rec.createdAt === "number" ? rec.createdAt : Date.now()),
+        children: [new Paragraph({ children: [new TextRun(String(rec.text ?? ""))] })],
+      });
+    }
+  });
+  return ctx;
+}
 
 const CELL_BORDER = { style: "single" as const, size: 4, color: "000000" };
 
@@ -143,9 +241,16 @@ function orderedLevels() {
 /**
  * Natural pixel size of a base64-encoded raster image (PNG/GIF/JPEG/BMP).
  * Returns null when the format is unknown or the header is malformed.
+ *
+ * Only the header is decoded (64 KB covers any realistic JPEG SOF even with
+ * large EXIF/APP segments): decoding the whole base64 payload per image node
+ * just to read 8–26 bytes was a full wasted decode of every photo, on top
+ * of the docx library's own decode.
  */
+const IMAGE_HEADER_BASE64_BYTES = 64 * 1024;
 function imageSizeFromBase64(b64: string): { w: number; h: number } | null {
-  const buf = Buffer.from(b64, "base64");
+  const header = b64.length > IMAGE_HEADER_BASE64_BYTES ? b64.slice(0, IMAGE_HEADER_BASE64_BYTES) : b64;
+  const buf = Buffer.from(header, "base64");
   // PNG: IHDR width/height at offsets 16/20 (big-endian u32).
   if (buf.length > 24 && buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) {
     return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
@@ -182,10 +287,12 @@ function imageSizeFromBase64(b64: string): { w: number; h: number } | null {
 
 /** Decode a `data:image/...;base64,` URL into docx `ImageRun` fields. */
 function dataUrlToImage(src: string): { type: "png" | "jpg" | "gif" | "bmp"; data: string } | null {
-  const m = src.match(/^data:image\/(png|jpe?g|gif|bmp);base64,(.+)$/s);
-  if (!m) return null;
-  const type = m[1] === "jpeg" ? "jpg" : m[1];
-  return { type: type as "png" | "jpg" | "gif" | "bmp", data: m[2] };
+  // indexOf + slice instead of a `(.+)` capture: the regex engine copies the
+  // entire (megabyte-scale) base64 payload into the capture group.
+  const header = /^data:image\/(png|jpe?g|gif|bmp);base64,/i.exec(src);
+  if (!header) return null;
+  const type = header[1].toLowerCase() === "jpeg" ? "jpg" : header[1].toLowerCase();
+  return { type: type as "png" | "jpg" | "gif" | "bmp", data: src.slice(header[0].length) };
 }
 
 /** One paragraph containing the image, clamped to the page content width. */
@@ -263,11 +370,14 @@ const MONO_FONT = { name: FONT_CODE };
  * Inline children of a paragraph → docx runs.
  *
  * A `text` child becomes one run carrying every mark it holds; a `hardBreak`
- * becomes a `<w:br/>`; a text carrying the `link` mark is wrapped in an
+ * becomes a `<w:br/>`; a `footnoteRef` becomes a real `FootnoteReferenceRun`;
+ * a `comment` mark wraps the run in `CommentRangeStart/End` + `CommentReference`;
+ * `trackedInsert`/`trackedDelete` become native `w:ins`/`w:del` runs so Word
+ * shows them in its own Review pane; and a `link` mark wraps the run in an
  * `ExternalHyperlink` so Word shows a real, clickable link (the mark itself was
  * already validated to an http/https/mailto/tel URL when it was stored).
  */
-function buildRuns(children: PMNode[]): ParagraphChild[] {
+function buildRuns(children: PMNode[], ctx: ExportContext): ParagraphChild[] {
   const runs: ParagraphChild[] = [];
   for (const child of children) {
     if (child.type === "hardBreak") {
@@ -275,11 +385,21 @@ function buildRuns(children: PMNode[]): ParagraphChild[] {
       runs.push(new TextRun({ break: 1 }));
       continue;
     }
+    if (child.type === "footnoteRef") {
+      const ordinal = ctx.footnotes.get(child);
+      if (ordinal !== undefined) runs.push(new FootnoteReferenceRun(ordinal));
+      continue;
+    }
     if (child.type !== "text") continue;
     const text = String(child.text ?? "");
     if (text.length === 0) continue;
     const opts: RunOptions = {};
     let href: string | null = null;
+    let commentId: number | undefined;
+    let inserted = false;
+    let deleted = false;
+    let trackAuthor = "Unknown";
+    let trackDate = new Date().toISOString();
     for (const mark of child.marks ?? []) {
       const a = mark.attrs ?? {};
       switch (mark.type) {
@@ -299,6 +419,19 @@ function buildRuns(children: PMNode[]): ParagraphChild[] {
           // Word has no inline "code" character style here; monospace + the
           // grey shading is the closest stable rendering.
           opts.font = MONO_FONT;
+          break;
+        case "comment":
+          commentId = ctx.comments.get(String(a.id ?? ""));
+          break;
+        case "trackedInsert":
+          inserted = true;
+          trackAuthor = String(a.author ?? "") || trackAuthor;
+          if (typeof a.date === "string" && a.date) trackDate = a.date;
+          break;
+        case "trackedDelete":
+          deleted = true;
+          trackAuthor = String(a.author ?? "") || trackAuthor;
+          if (typeof a.date === "string" && a.date) trackDate = a.date;
           break;
         case "link": {
           const candidate = typeof a.href === "string" ? a.href.trim() : "";
@@ -341,18 +474,38 @@ function buildRuns(children: PMNode[]): ParagraphChild[] {
     // instead of having every run's direct formatting override them. Runs
     // only carry direct font/size when the user set it via a textStyle mark.
 
+    ctx.revision.n += 1;
+    let core: ParagraphChild[];
     if (href) {
       // The link's own colour/underline win over whatever the run carried;
       // Word users expect the blue underlined treatment.
-      runs.push(
+      core = [
         new ExternalHyperlink({
           link: href,
           children: [new TextRun({ text, ...opts, color: HYPERLINK_COLOR, underline: { type: "single" } })],
         }),
-      );
-      continue;
+      ];
+    } else if (deleted) {
+      // Native Word revision: the text lives inside `w:del` and Word's Review
+      // pane can accept or reject it without our marks.
+      core = [
+        new DeletedTextRun({ text, id: ctx.revision.n, author: trackAuthor, date: trackDate, ...opts }),
+      ];
+    } else if (inserted) {
+      core = [
+        new InsertedTextRun({ text, id: ctx.revision.n, author: trackAuthor, date: trackDate, ...opts }),
+      ];
+    } else {
+      core = [new TextRun({ text, ...opts })];
     }
-    runs.push(new TextRun({ text, ...opts }));
+
+    if (commentId !== undefined) {
+      runs.push(new CommentRangeStart(commentId));
+      runs.push(...core);
+      runs.push(new CommentRangeEnd(commentId), new CommentReference(commentId));
+    } else {
+      runs.push(...core);
+    }
   }
   return runs;
 }
@@ -385,7 +538,12 @@ interface ParagraphExtras {
   spacingAfterTwips?: number;
 }
 
-function makeParagraph(node: PMNode, listCtx: ListContext | null, extra?: ParagraphExtras): Paragraph {
+function makeParagraph(
+  node: PMNode,
+  listCtx: ListContext | null,
+  extra: ParagraphExtras | undefined,
+  ctx: ExportContext,
+): Paragraph {
   const attrs = node.attrs ?? {};
   const alignment = typeof attrs.textAlign === "string" ? ALIGN_MAP[attrs.textAlign] : undefined;
   const lineSpacing = num(attrs.lineSpacing, 1);
@@ -407,7 +565,7 @@ function makeParagraph(node: PMNode, listCtx: ListContext | null, extra?: Paragr
   }
 
   const paragraph: Paragraph = new Paragraph({
-    children: buildRuns(childrenOf(node)),
+    children: buildRuns(childrenOf(node), ctx),
     ...(alignment !== undefined ? { alignment } : {}),
     ...(Object.keys(spacing).length > 0 ? { spacing } : {}),
     ...(heading !== undefined ? { heading } : {}),
@@ -451,8 +609,9 @@ function listItemToParagraphs(
   level: number,
   orderedRef: string | null,
   siblings: ListSiblings,
+  ctx: ExportContext,
 ): Paragraph[] {
-  const ctx: ListContext =
+  const ctxList: ListContext =
     kind === "bullet"
       ? { bullet: { level } }
       : orderedRef
@@ -464,17 +623,24 @@ function listItemToParagraphs(
     const isLastChild = k === kids.length - 1;
     if (child.type === "paragraph" || child.type === "heading") {
       const after = isLastChild ? (siblings.isLastItem ? siblings.listBottomTwips : 0) : MIDDLE_AFTER_TWIPS;
-      out.push(makeParagraph(child, ctx, { spacingAfterTwips: after }));
+      out.push(makeParagraph(child, ctxList, { spacingAfterTwips: after }, ctx));
     } else if (child.type === "bulletList") {
       const subs = childrenOf(child).filter((c) => c.type === "listItem");
       subs.forEach((sub, si) => {
         out.push(
-          ...listItemToParagraphs(sub, "bullet", level + 1, null, {
-            isLastItem: si === subs.length - 1 && isLastChild && siblings.isLastItem,
-            // `li > ul { margin: 0 }` — a nested list only shows the outer
-            // list's bottom margin when it is itself the very last element.
-            listBottomTwips: isLastChild ? siblings.listBottomTwips : MIDDLE_AFTER_TWIPS,
-          }),
+          ...listItemToParagraphs(
+            sub,
+            "bullet",
+            level + 1,
+            null,
+            {
+              isLastItem: si === subs.length - 1 && isLastChild && siblings.isLastItem,
+              // `li > ul { margin: 0 }` — a nested list only shows the outer
+              // list's bottom margin when it is itself the very last element.
+              listBottomTwips: isLastChild ? siblings.listBottomTwips : MIDDLE_AFTER_TWIPS,
+            },
+            ctx,
+          ),
         );
       });
     } else if (child.type === "orderedList") {
@@ -483,10 +649,17 @@ function listItemToParagraphs(
         // A nested ordered list continues its own parent's sequence (same
         // reference, deeper level) — that is how Word nests a numbered list.
         out.push(
-          ...listItemToParagraphs(sub, "ordered", level + 1, orderedRef, {
-            isLastItem: si === subs.length - 1 && isLastChild && siblings.isLastItem,
-            listBottomTwips: isLastChild ? siblings.listBottomTwips : MIDDLE_AFTER_TWIPS,
-          }),
+          ...listItemToParagraphs(
+            sub,
+            "ordered",
+            level + 1,
+            orderedRef,
+            {
+              isLastItem: si === subs.length - 1 && isLastChild && siblings.isLastItem,
+              listBottomTwips: isLastChild ? siblings.listBottomTwips : MIDDLE_AFTER_TWIPS,
+            },
+            ctx,
+          ),
         );
       });
     }
@@ -501,15 +674,23 @@ function listItemsToParagraphs(
   level: number,
   orderedRef: string | null,
   listIsLastInParent: boolean,
+  ctx: ExportContext,
 ): Paragraph[] {
   const items = childrenOf(list).filter((c) => c.type === (kind === "bullet" ? "listItem" : "listItem"));
   const out: Paragraph[] = [];
   items.forEach((item, i) => {
     out.push(
-      ...listItemToParagraphs(item, kind, level, orderedRef, {
-        isLastItem: i === items.length - 1,
-        listBottomTwips: listIsLastInParent ? 0 : MIDDLE_AFTER_TWIPS,
-      }),
+      ...listItemToParagraphs(
+        item,
+        kind,
+        level,
+        orderedRef,
+        {
+          isLastItem: i === items.length - 1,
+          listBottomTwips: listIsLastInParent ? 0 : MIDDLE_AFTER_TWIPS,
+        },
+        ctx,
+      ),
     );
   });
   return out;
@@ -522,26 +703,26 @@ function listItemsToParagraphs(
  * (`li.fw-task-item p { margin: 0 }`), so only the list's 6 pt bottom gap —
  * passed in as `afterTwips` — is mirrored, on the final item.
  */
-function taskItemToParagraphs(item: PMNode, afterTwips: number): Paragraph[] {
+function taskItemToParagraphs(item: PMNode, afterTwips: number, ctx: ExportContext): Paragraph[] {
   const inner = childrenOf(item).find((c) => c.type === "paragraph" || c.type === "heading");
   const glyph = item.attrs?.checked === true ? "☑ " : "☐ ";
   const runs: ParagraphChild[] = [
     new TextRun({ text: glyph, font: { name: FONT_SYMBOL }, size: BODY_SIZE_HALF_POINTS }),
   ];
-  if (inner) runs.push(...buildRuns(childrenOf(inner)));
+  if (inner) runs.push(...buildRuns(childrenOf(inner), ctx));
   return [new Paragraph({ style: "FwTaskItem", children: runs, spacing: { after: afterTwips } })];
 }
 
 /** Task list: tight items; the list gap rides on the last item's paragraph. */
-function taskListToParagraphs(node: PMNode, isLastInParent: boolean): Paragraph[] {
+function taskListToParagraphs(node: PMNode, isLastInParent: boolean, ctx: ExportContext): Paragraph[] {
   const items = childrenOf(node).filter((c) => c.type === "taskItem");
   return items.flatMap((c, i) =>
-    taskItemToParagraphs(c, i === items.length - 1 && !isLastInParent ? MIDDLE_AFTER_TWIPS : 0),
+    taskItemToParagraphs(c, i === items.length - 1 && !isLastInParent ? MIDDLE_AFTER_TWIPS : 0, ctx),
   );
 }
 
 /** A callout exports as its body paragraphs, shaded, with the icon on the first line. */
-function calloutToParagraphs(node: PMNode, isLastInParent: boolean): Paragraph[] {
+function calloutToParagraphs(node: PMNode, isLastInParent: boolean, ctx: ExportContext): Paragraph[] {
   const blocks = childrenOf(node);
   const icon = typeof node.attrs?.icon === "string" ? node.attrs.icon : "💡";
   const out: Paragraph[] = [];
@@ -549,7 +730,7 @@ function calloutToParagraphs(node: PMNode, isLastInParent: boolean): Paragraph[]
     const isLastBlock = i === blocks.length - 1;
     const after = isLastBlock ? lastChildAfterTwips(isLastInParent) : MIDDLE_AFTER_TWIPS;
     if (block.type === "paragraph" || block.type === "heading") {
-      const runs = buildRuns(childrenOf(block));
+      const runs = buildRuns(childrenOf(block), ctx);
       if (i === 0) {
         runs.unshift(
           new TextRun({ text: `${icon} `, font: { name: FONT_EMOJI }, size: BODY_SIZE_HALF_POINTS }),
@@ -567,7 +748,7 @@ function calloutToParagraphs(node: PMNode, isLastInParent: boolean): Paragraph[]
     }
     // Anything exotic inside a callout still exports as best-effort paragraphs.
     out.push(
-      ...blockToDocChildren(block, 0, new OrderedNumbering(), isLastBlock && isLastInParent).filter(
+      ...blockToDocChildren(block, 0, new OrderedNumbering(), isLastBlock && isLastInParent, ctx).filter(
         (c): c is Paragraph => c instanceof Paragraph,
       ),
     );
@@ -590,6 +771,7 @@ function quoteToParagraphs(
   contentWidthPx: number,
   ordered: OrderedNumbering,
   isLastInParent: boolean,
+  ctx: ExportContext,
 ): DocChild[] {
   const out: DocChild[] = [];
   const blocks = childrenOf(node);
@@ -598,10 +780,15 @@ function quoteToParagraphs(
     const after = isLastBlock ? lastChildAfterTwips(isLastInParent) : MIDDLE_AFTER_TWIPS;
     if (block.type === "paragraph" || block.type === "heading") {
       out.push(
-        makeParagraph(block, null, { styleName: "FwQuote", indentLeftTwips: 720, spacingAfterTwips: after }),
+        makeParagraph(
+          block,
+          null,
+          { styleName: "FwQuote", indentLeftTwips: 720, spacingAfterTwips: after },
+          ctx,
+        ),
       );
     } else {
-      out.push(...blockToDocChildren(block, contentWidthPx, ordered, isLastBlock && isLastInParent));
+      out.push(...blockToDocChildren(block, contentWidthPx, ordered, isLastBlock && isLastInParent, ctx));
     }
   });
   return out.length > 0 ? out : [new Paragraph({ style: "FwQuote", children: [] })];
@@ -636,26 +823,27 @@ function blockToDocChildren(
   contentWidthPx: number,
   ordered: OrderedNumbering,
   isLast = false,
+  ctx: ExportContext,
 ): DocChild[] {
   switch (node.type) {
     case "pageBreak":
       return [new Paragraph({ children: [new PageBreak()] })];
     case "paragraph":
-      return [makeParagraph(node, null, { spacingAfterTwips: isLast ? 0 : MIDDLE_AFTER_TWIPS })];
+      return [makeParagraph(node, null, { spacingAfterTwips: isLast ? 0 : MIDDLE_AFTER_TWIPS }, ctx)];
     case "heading":
       // The CSS collapse targets `p:last-child`, so headings keep their 6 pt
       // gap even as the last block — matching the editor.
-      return [makeParagraph(node, null, { spacingAfterTwips: MIDDLE_AFTER_TWIPS })];
+      return [makeParagraph(node, null, { spacingAfterTwips: MIDDLE_AFTER_TWIPS }, ctx)];
     // --- Notion-style blocks (see renderer/src/editor/blocks.ts) ----------
     // Word has no native task list / callout / quote-block / code-block, so
     // each export carries a custom style id (recognised on import) plus a
     // visual fallback that stays readable in Word itself.
     case "taskList":
-      return taskListToParagraphs(node, isLast);
+      return taskListToParagraphs(node, isLast, ctx);
     case "callout":
-      return calloutToParagraphs(node, isLast);
+      return calloutToParagraphs(node, isLast, ctx);
     case "fwQuote":
-      return quoteToParagraphs(node, contentWidthPx, ordered, isLast);
+      return quoteToParagraphs(node, contentWidthPx, ordered, isLast, ctx);
     case "divider":
       return [
         new Paragraph({
@@ -668,27 +856,34 @@ function blockToDocChildren(
     case "fwCodeBlock":
       return codeBlockToParagraphs(node, isLast);
     case "bulletList":
-      return listItemsToParagraphs(node, "bullet", 0, null, isLast);
+      return listItemsToParagraphs(node, "bullet", 0, null, isLast, ctx);
     case "orderedList": {
       const reference = ordered.next();
-      return listItemsToParagraphs(node, "ordered", 0, reference, isLast);
+      return listItemsToParagraphs(node, "ordered", 0, reference, isLast, ctx);
     }
     case "table":
-      return [pmTableToDocx(node, contentWidthPx, ordered)];
+      return [pmTableToDocx(node, contentWidthPx, ordered, ctx)];
     case "image":
       return [imageToParagraph(node, contentWidthPx)];
     default:
       // Unknown block nodes are skipped; recurse so nested content is not lost.
       return childrenOf(node).flatMap((c, ci) =>
-        blockToDocChildren(c, contentWidthPx, ordered, ci === childrenOf(node).length - 1 && isLast),
+        blockToDocChildren(c, contentWidthPx, ordered, ci === childrenOf(node).length - 1 && isLast, ctx),
       );
   }
 }
 
 /** Cell content: any block nodes (paragraphs, lists, nested tables, images). */
-function cellBlocks(cell: PMNode, contentWidthPx: number, ordered: OrderedNumbering): DocChild[] {
+function cellBlocks(
+  cell: PMNode,
+  contentWidthPx: number,
+  ordered: OrderedNumbering,
+  ctx: ExportContext,
+): DocChild[] {
   const kids = childrenOf(cell);
-  const out = kids.flatMap((c, ci) => blockToDocChildren(c, contentWidthPx, ordered, ci === kids.length - 1));
+  const out = kids.flatMap((c, ci) =>
+    blockToDocChildren(c, contentWidthPx, ordered, ci === kids.length - 1, ctx),
+  );
   // OOXML requires at least one paragraph in every cell.
   if (out.length === 0) out.push(new Paragraph({}));
   return out;
@@ -709,7 +904,12 @@ function cellWidthTwips(attrs: Record<string, unknown>): number | undefined {
 }
 
 /** Convert a Tiptap `table` node into a docx `Table` with simple grid borders. */
-function pmTableToDocx(node: PMNode, contentWidthPx: number, ordered: OrderedNumbering): Table {
+function pmTableToDocx(
+  node: PMNode,
+  contentWidthPx: number,
+  ordered: OrderedNumbering,
+  ctx: ExportContext,
+): Table {
   const rows: TableRow[] = [];
   for (const rowNode of childrenOf(node)) {
     if (rowNode.type !== "tableRow") continue;
@@ -722,7 +922,7 @@ function pmTableToDocx(node: PMNode, contentWidthPx: number, ordered: OrderedNum
       const widthTwips = cellWidthTwips(ca);
       cells.push(
         new TableCell({
-          children: cellBlocks(cellNode, contentWidthPx, ordered),
+          children: cellBlocks(cellNode, contentWidthPx, ordered, ctx),
           columnSpan: positiveInt(ca.colspan, 1),
           rowSpan: positiveInt(ca.rowspan, 1),
           verticalAlign: VerticalAlignTable.TOP,
@@ -793,6 +993,29 @@ function documentStyles() {
   };
 }
 
+/**
+ * Header/footer text → docx runs: the `{{page}}` / `{{pages}}` tokens become
+ * real `PAGE` / `NUMPAGES` fields so Word prints live page numbers.
+ */
+function bandRuns(text: string): ParagraphChild[] {
+  const out: ParagraphChild[] = [];
+  const parts = text.split(/(\{\{pages?\}\})/);
+  for (const part of parts) {
+    if (part === "{{page}}") out.push(new TextRun({ children: [PageNumber.CURRENT] }));
+    else if (part === "{{pages}}") out.push(new TextRun({ children: [PageNumber.TOTAL_PAGES] }));
+    else if (part) out.push(new TextRun({ text: part }));
+  }
+  return out;
+}
+
+function bandParagraph(text: unknown, align: unknown): Paragraph {
+  const a = typeof align === "string" ? ALIGN_MAP[align] : undefined;
+  return new Paragraph({
+    children: bandRuns(String(text ?? "")),
+    ...(a !== undefined ? { alignment: a } : {}),
+  });
+}
+
 export async function toDocxBuffer(pm: Record<string, unknown>): Promise<Buffer> {
   // The payload arrives over IPC, so it may be anything at all. Treat a
   // missing/non-object document as an empty one rather than throwing — a
@@ -806,6 +1029,8 @@ export async function toDocxBuffer(pm: Record<string, unknown>): Promise<Buffer>
   const mb = num(attrs.mb, 25.4);
   const ml = num(attrs.ml, 25.4);
 
+  const ctx = buildExportContext(doc);
+
   const pages = childrenOf(doc).filter((n) => n.type === "page");
   // Page content width in CSS px (96 DPI), used to clamp oversized images.
   const contentWidthPx = mmToPx(Math.max(10, ps.w - ml - mr));
@@ -815,7 +1040,7 @@ export async function toDocxBuffer(pm: Record<string, unknown>): Promise<Buffer>
     const pageBlocks = childrenOf(page);
     const lastIsBreak = pageBlocks.length > 0 && pageBlocks[pageBlocks.length - 1].type === "pageBreak";
     pageBlocks.forEach((block, bi) => {
-      children.push(...blockToDocChildren(block, contentWidthPx, ordered, bi === pageBlocks.length - 1));
+      children.push(...blockToDocChildren(block, contentWidthPx, ordered, bi === pageBlocks.length - 1, ctx));
     });
     // Page-boundary break between explicit pages, suppressed when the page
     // already ends with an explicit pageBreak node (no double breaks).
@@ -824,11 +1049,25 @@ export async function toDocxBuffer(pm: Record<string, unknown>): Promise<Buffer>
     }
   });
 
+  const headerText = typeof attrs.header === "string" && attrs.header ? attrs.header : null;
+  const footerText = typeof attrs.footer === "string" && attrs.footer ? attrs.footer : null;
+
   const docx = new Document({
     creator: "FreeWord",
     title: "FreeWord Document",
     styles: documentStyles(),
     numbering: { config: ordered.toConfig() },
+    ...(ctx.commentDefs.length > 0 ? { comments: { children: ctx.commentDefs } } : {}),
+    ...(ctx.footnoteTexts.size > 0
+      ? {
+          footnotes: Object.fromEntries(
+            [...ctx.footnoteTexts.entries()].map(([ordinal, text]) => [
+              String(ordinal),
+              { children: [new Paragraph({ children: [new TextRun(`${ordinal}.  ${text}`)] })] },
+            ]),
+          ),
+        }
+      : {}),
     sections: [
       {
         properties: {
@@ -845,6 +1084,12 @@ export async function toDocxBuffer(pm: Record<string, unknown>): Promise<Buffer>
             },
           },
         },
+        ...(headerText !== null
+          ? { headers: { default: new Header({ children: [bandParagraph(headerText, attrs.headerAlign)] }) } }
+          : {}),
+        ...(footerText !== null
+          ? { footers: { default: new Footer({ children: [bandParagraph(footerText, attrs.footerAlign)] }) } }
+          : {}),
         children,
       },
     ],

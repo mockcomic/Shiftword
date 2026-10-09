@@ -208,17 +208,39 @@ describe("domToDoc — docx-preview normalization", () => {
     expect(s).toContain('"level":3');
   });
 
-  it("drops header/footer/footnote chrome but keeps tables", () => {
+  it("moves header/footer chrome into the doc attrs and keeps tables", () => {
     const containerEl = container(`
       <div class="docx-wrapper"><section class="docx">
         <div class="docx-header"><p>hdr</p></div>
         <div class="docx-footer"><p>ftr</p></div>
         <table><tbody><tr><td><p>cell</p></td><td><p>two</p></td></tr></tbody></table>
       </section></div>`);
+    const doc = domToDoc(containerEl, null, schema) as {
+      attrs: Record<string, unknown>;
+      content: unknown;
+    };
+    const body = JSON.stringify(doc.content);
+    expect(body).not.toContain("hdr");
+    expect(body).not.toContain("ftr");
+    // The band text is not lost — it lands in the header/footer doc attrs.
+    expect(doc.attrs.header).toContain("hdr");
+    expect(doc.attrs.footer).toContain("ftr");
+    expect(body).toContain("table");
+    expect(body).toContain("cell");
+  });
+
+  it("re-hydrates footnote refs and their trailing note list", () => {
+    const containerEl = container(`
+      <div class="docx-wrapper"><section class="docx">
+        <p>See the note<sup>1</sup> here.</p>
+        <ol><li>1.  The note text.</li></ol>
+      </section></div>`);
     const s = JSON.stringify(domToDoc(containerEl, null, schema));
-    expect(s).not.toContain("hdr");
-    expect(s).not.toContain("ftr");
-    expect(s).toContain("table");
-    expect(s).toContain("cell");
+    expect(s).toContain('"type":"footnoteRef"');
+    expect(s).toContain("The note text.");
+    // The rendered note list must not survive as an ordered list.
+    expect(s).not.toContain('"type":"orderedList"');
+    // The reference number itself is not paragraph text either.
+    expect(s).not.toContain('"text":"See the note1 here."');
   });
 });

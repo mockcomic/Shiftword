@@ -77,6 +77,12 @@ function replaceRunWithList(run: HTMLElement[], isOrdered: (token: string) => bo
   if (!parent) return;
   const rootLevel = tokenLevel(first);
   const rootList = document.createElement(isOrdered(listToken(first)) ? "ol" : "ul");
+  // Capture the insertion anchor BEFORE the loop removes the run — a removed
+  // node's `nextSibling` is null, and inserting against that stale anchor
+  // appended the rebuilt list to the END of the section, silently moving it
+  // past every later paragraph (compare convertFwBlockSignatures, which does
+  // capture the sibling first).
+  const anchor = run[run.length - 1].nextSibling;
   const stack: ListFrame[] = [];
   let lastLi: HTMLLIElement | null = null;
   for (const p of run) {
@@ -99,7 +105,7 @@ function replaceRunWithList(run: HTMLElement[], isOrdered: (token: string) => bo
     (stack.length > 0 ? stack[stack.length - 1].list : rootList).appendChild(li);
     lastLi = li;
   }
-  parent.insertBefore(rootList, first.nextSibling);
+  parent.insertBefore(rootList, anchor);
 }
 
 function convertListParagraphs(root: HTMLElement, isOrdered: (token: string) => boolean): void {
@@ -320,6 +326,90 @@ export function convertFwBlockSignatures(root: HTMLElement): void {
   }
 }
 
+/**
+ * Headers/footers and footnote text recovered from the section rendering.
+ * Page-number fields come through as their rendered first-page number (no
+ * token recovery), which is the documented best-effort import path.
+ */
+export interface ImportedBands {
+  header: string | null;
+  headerAlign: "left" | "center" | "right";
+  footer: string | null;
+  footerAlign: "left" | "center" | "right";
+}
+
+function bandAlign(el: HTMLElement): "left" | "center" | "right" {
+  const firstPara = el.querySelector("p") ?? el;
+  const a = (firstPara instanceof HTMLElement ? firstPara.style.textAlign : "").toLowerCase();
+  if (a === "center" || a === "right") return a;
+  return "left";
+}
+
+function bandText(el: HTMLElement | null): string | null {
+  if (!el) return null;
+  const text = (el.textContent ?? "").replace(/\s+/g, " ").trim();
+  return text ? text : null;
+}
+
+/**
+ * Read the first `header`/`footer` element of the rendered document (the
+ * elements themselves are dropped from the body by `normalizeDom`).
+ */
+export function readHeaderFooterTexts(root: HTMLElement): ImportedBands {
+  const header = root.querySelector<HTMLElement>("header, .docx-header");
+  const footer = root.querySelector<HTMLElement>("footer, .docx-footer");
+  return {
+    header: bandText(header),
+    headerAlign: header ? bandAlign(header) : "left",
+    footer: bandText(footer),
+    footerAlign: footer ? bandAlign(footer) : "left",
+  };
+}
+
+/**
+ * Convert docx-preview's footnote rendering back into `footnoteRef` nodes:
+ * each plain numeric `<sup>` (the reference, numbered per section) is
+ * replaced by our schema signature carrying the matching note text from the
+ * section's trailing note list, which is then removed from the body.
+ */
+export function convertFootnotes(root: HTMLElement): void {
+  const sections = Array.from(root.querySelectorAll<HTMLElement>("section.docx"));
+  const targets: HTMLElement[] = sections.length > 0 ? sections : [root];
+  for (const section of targets) {
+    const refs = Array.from(section.querySelectorAll<HTMLElement>("sup")).filter(
+      (el) => /^\d+$/.test((el.textContent ?? "").trim()) && !el.hasAttribute("data-type"),
+    );
+    // No numeric references → no footnote chrome to harvest, and any plain
+    // `<ol>` in the section is genuine content, not a note list.
+    if (refs.length === 0) continue;
+    const kids = Array.from(section.children) as HTMLElement[];
+    // The note list is the last `<ol>` written into the section (the footer,
+    // when rendered, trails it) whose entries are bare paragraphs/items.
+    const noteList = [...kids]
+      .reverse()
+      .find(
+        (el) =>
+          el.tagName === "OL" &&
+          Array.from(el.children).every((c) => c.tagName === "LI" || c.tagName === "P"),
+      );
+    const notes = noteList
+      ? Array.from(noteList.children).map((li) =>
+          (li.textContent ?? "")
+            .replace(/^\s*\d+[.\s]*/, "")
+            .replace(/\s+/g, " ")
+            .trim(),
+        )
+      : [];
+    refs.forEach((sup, i) => {
+      const replacement = document.createElement("sup");
+      replacement.setAttribute("data-type", "footnoteRef");
+      replacement.setAttribute("data-fn", notes[i] ?? sup.textContent?.trim() ?? "");
+      sup.replaceWith(replacement);
+    });
+    noteList?.remove();
+  }
+}
+
 /** Convert a CSS length (px/pt/in/cm/mm) to CSS pixels; null if unparseable. */
 function cssLenToPx(v: string | null): number | null {
   if (!v) return null;
@@ -446,7 +536,13 @@ export function normalizeImages(root: HTMLElement): void {
  * - empty text spans (page-break artifacts) are removed
  */
 function normalizeDom(root: HTMLElement, orderedTokens: Set<string>): void {
-  root.querySelectorAll("style, script, link, .docx-header, .docx-footer").forEach((el) => el.remove());
+  // Headers, footers and the trailing per-section footnote list are rendered
+  // as sibling elements of the body; the band text is scraped by
+  // `readHeaderFooterTexts`/`convertFootnotes` (which removes the note list)
+  // before this runs, so everything left here is dropped from the body text.
+  root
+    .querySelectorAll("style, script, link, header, footer, .docx-header, .docx-footer")
+    .forEach((el) => el.remove());
 
   normalizeImages(root);
   sanitizeAnchors(root);
@@ -516,6 +612,10 @@ export function domToDoc(
   schema: Schema,
 ): Record<string, unknown> {
   const root = container.querySelector<HTMLElement>(":scope > .docx-wrapper") ?? container;
+  // Scrape the bands and re-hydrate footnote refs *before* the body
+  // normalization strips the header/footer/footer-list chrome away.
+  const bands = readHeaderFooterTexts(root);
+  convertFootnotes(root);
   normalizeDom(root, collectOrderedListTokens(styleContainer));
 
   const sections = Array.from(root.querySelectorAll<HTMLElement>("section.docx"));
@@ -536,7 +636,14 @@ export function domToDoc(
 
   return {
     type: "doc",
-    attrs: { ...DEFAULT_DOC_ATTRS, ...readPageAttrs(root) },
+    attrs: {
+      ...DEFAULT_DOC_ATTRS,
+      ...readPageAttrs(root),
+      header: bands.header,
+      headerAlign: bands.headerAlign,
+      footer: bands.footer,
+      footerAlign: bands.footerAlign,
+    },
     content: [{ type: "page", content: pageContent }],
   };
 }
@@ -551,10 +658,15 @@ export async function docxBufferToDoc(buffer: Uint8Array, schema: Schema): Promi
   await renderAsync(buffer, container, styleContainer, {
     inWrapper: true,
     breakPages: true,
-    renderHeaders: false,
-    renderFooters: false,
-    renderFootnotes: false,
+    // The bands and the footnote list are rendered into the section so the
+    // importers can scrape them (readHeaderFooterTexts / convertFootnotes);
+    // normalizeDom then removes the chrome from the body.
+    renderHeaders: true,
+    renderFooters: true,
+    renderFootnotes: true,
     renderEndnotes: false,
+    // Comments import as plain text (docx-preview injects popover chrome at
+    // the reference, which would pollute the body text).
     renderComments: false,
     // Keep the section geometry (width/minHeight/padding inline styles) —
     // readPageAttrs recovers the real page size and margins from them.

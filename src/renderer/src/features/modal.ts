@@ -16,57 +16,108 @@ export interface PromptOptions {
   /** Label of the confirm button. */
   okLabel?: string;
   /**
+   * Render a `<textarea>` instead of a one-line input (footnote text,
+   * comments, header/footer editing). Enter then inserts a newline;
+   * Ctrl/Cmd+Enter accepts.
+   */
+  multiline?: boolean;
+  /**
    * Return an error string to keep the dialog open and show it instead of
    * accepting the value.
    */
   validate?: (value: string) => string | null;
 }
 
+/** Escape text for interpolation into the template `innerHTML` below. */
+export function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 /**
- * Ask the user for one line of text. Resolves with the entered value, or null
- * when dismissed (Cancel, Escape, click on the backdrop).
+ * Only one dialog of each kind is live at a time. A second `alertDialog`
+ * preempting the first used to `remove()` the old overlay but leave its
+ * capture-phase keydown handler attached and its Promise unresolved: the
+ * awaiting caller hung forever and the orphan handler stole Escape/Enter
+ * from the NEW dialog (it was registered first, so it ran first). Registering
+ * a disposer makes preemption resolve the old Promise and detach its listener.
+ */
+const activeDisposers = new Map<string, () => void>();
+
+function preempt(id: string): void {
+  activeDisposers.get(id)?.();
+  activeDisposers.delete(id);
+}
+
+function arm(id: string, dispose: () => void): void {
+  activeDisposers.set(id, dispose);
+}
+
+function disarm(id: string, dispose: () => void): void {
+  if (activeDisposers.get(id) === dispose) activeDisposers.delete(id);
+}
+
+/** True while an IME composition owns the keyboard: Enter then commits candidates, not dialogs. */
+function isImeComposing(e: KeyboardEvent): boolean {
+  return e.isComposing || e.keyCode === 229;
+}
+
+/**
+ * Ask the user for a line (or a block, with `multiline`) of text. Resolves
+ * with the entered value, or null when dismissed (Cancel, Escape, click on
+ * the backdrop, or a newer dialog of the same kind).
  */
 export function promptModal(opts: PromptOptions): Promise<string | null> {
-  const { title, label, value = "", placeholder = "", okLabel = "OK", validate } = opts;
+  const { title, label, value = "", placeholder = "", okLabel = "OK", multiline = false, validate } = opts;
 
   return new Promise((resolve) => {
-    document.getElementById("fw-prompt")?.remove();
+    preempt("fw-prompt");
 
+    const field = multiline ? "textarea" : "input";
     const overlay = document.createElement("div");
     overlay.id = "fw-prompt";
     overlay.className = "fw-modal-overlay";
     overlay.innerHTML = `
-      <div class="fw-modal" role="dialog" aria-modal="true" aria-label="${title}">
-        <h2>${title}</h2>
+      <div class="fw-modal" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+        <h2>${escapeHtml(title)}</h2>
         <div class="row">
-          <label for="fw-prompt-input">${label}</label>
-          <input id="fw-prompt-input" type="text">
+          <label for="fw-prompt-input">${escapeHtml(label)}</label>
+          <${field} id="fw-prompt-input"${multiline ? ' rows="4"' : ' type="text"'}></${field}>
         </div>
         <p class="fw-prompt-error" id="fw-prompt-error" role="alert" hidden></p>
         <div class="actions">
           <button id="fw-prompt-cancel" type="button">Cancel</button>
-          <button id="fw-prompt-ok" type="button" class="primary">${okLabel}</button>
+          <button id="fw-prompt-ok" type="button" class="primary">${escapeHtml(okLabel)}</button>
         </div>
       </div>
     `;
     document.body.appendChild(overlay);
 
-    const input = overlay.querySelector<HTMLInputElement>("#fw-prompt-input")!;
+    const input = overlay.querySelector<HTMLInputElement | HTMLTextAreaElement>("#fw-prompt-input")!;
     const error = overlay.querySelector<HTMLElement>("#fw-prompt-error")!;
     input.value = value;
     if (placeholder) input.placeholder = placeholder;
 
     let done = false;
-    const finish = (result: string | null): void => {
+    const dispose = (): void => {
       if (done) return;
       done = true;
       document.removeEventListener("keydown", onKey, true);
+      disarm("fw-prompt", dispose);
       overlay.remove();
+    };
+    const finish = (result: string | null): void => {
+      dispose();
       resolve(result);
     };
 
     const accept = (): void => {
-      const v = input.value.trim();
+      // Multiline keeps the user's line breaks; a single line never had any.
+      const v = multiline ? input.value.replace(/\s+$/, "") : input.value.trim();
       const problem = validate ? validate(v) : null;
       if (problem) {
         error.textContent = problem;
@@ -78,19 +129,21 @@ export function promptModal(opts: PromptOptions): Promise<string | null> {
     };
 
     const onKey = (e: KeyboardEvent): void => {
+      if (isImeComposing(e)) return;
       // Capture phase: the editor's own keymaps must not see the keys that
       // drive the dialog.
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
         finish(null);
-      } else if (e.key === "Enter") {
+      } else if (e.key === "Enter" && (!multiline || e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         e.stopPropagation();
         accept();
       }
     };
     document.addEventListener("keydown", onKey, true);
+    arm("fw-prompt", () => finish(null));
 
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay) finish(null);
@@ -105,15 +158,15 @@ export function promptModal(opts: PromptOptions): Promise<string | null> {
 /** Show a one-button message that does not block the renderer process. */
 export function alertDialog(message: string, title = "FreeWord"): Promise<void> {
   return new Promise((resolve) => {
-    document.getElementById("fw-alert")?.remove();
+    preempt("fw-alert");
 
     const overlay = document.createElement("div");
     overlay.id = "fw-alert";
     overlay.className = "fw-modal-overlay";
     overlay.innerHTML = `
-      <div class="fw-modal" role="alertdialog" aria-modal="true" aria-label="${title}">
-        <h2>${title}</h2>
-        <p class="fw-alert-message">${message}</p>
+      <div class="fw-modal" role="alertdialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+        <h2>${escapeHtml(title)}</h2>
+        <p class="fw-alert-message">${escapeHtml(message)}</p>
         <div class="actions">
           <button id="fw-alert-ok" type="button" class="primary">OK</button>
         </div>
@@ -122,12 +175,20 @@ export function alertDialog(message: string, title = "FreeWord"): Promise<void> 
     document.body.appendChild(overlay);
 
     const ok = overlay.querySelector<HTMLButtonElement>("#fw-alert-ok")!;
-    const finish = (): void => {
+    const dispose = (): void => {
+      if (disposed) return;
+      disposed = true;
       document.removeEventListener("keydown", onKey, true);
+      disarm("fw-alert", dispose);
       overlay.remove();
+    };
+    let disposed = false;
+    const finish = (): void => {
+      dispose();
       resolve();
     };
     const onKey = (e: KeyboardEvent): void => {
+      if (isImeComposing(e)) return;
       if (e.key === "Escape" || e.key === "Enter") {
         e.preventDefault();
         e.stopPropagation();
@@ -135,6 +196,7 @@ export function alertDialog(message: string, title = "FreeWord"): Promise<void> 
       }
     };
     document.addEventListener("keydown", onKey, true);
+    arm("fw-alert", finish);
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay) finish();
     });
@@ -159,33 +221,38 @@ export function saveChangesModal(opts: {
 }): Promise<"save" | "discard" | "cancel"> {
   const { title, message, saveLabel = "Save", discardLabel = "Don\u2019t save" } = opts;
   return new Promise((resolve) => {
-    document.getElementById("fw-save-changes")?.remove();
+    preempt("fw-save-changes");
 
     const overlay = document.createElement("div");
     overlay.id = "fw-save-changes";
     overlay.className = "fw-modal-overlay";
     overlay.innerHTML = `
-      <div class="fw-modal" role="alertdialog" aria-modal="true" aria-label="${title}">
-        <h2>${title}</h2>
-        <p class="fw-alert-message">${message}</p>
+      <div class="fw-modal" role="alertdialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+        <h2>${escapeHtml(title)}</h2>
+        <p class="fw-alert-message">${escapeHtml(message)}</p>
         <div class="actions">
           <button id="fw-save-changes-cancel" type="button">Cancel</button>
-          <button id="fw-save-changes-discard" type="button">${discardLabel}</button>
-          <button id="fw-save-changes-save" type="button" class="primary">${saveLabel}</button>
+          <button id="fw-save-changes-discard" type="button">${escapeHtml(discardLabel)}</button>
+          <button id="fw-save-changes-save" type="button" class="primary">${escapeHtml(saveLabel)}</button>
         </div>
       </div>
     `;
     document.body.appendChild(overlay);
 
     let done = false;
-    const finish = (value: "save" | "discard" | "cancel"): void => {
+    const dispose = (): void => {
       if (done) return;
       done = true;
       document.removeEventListener("keydown", onKey, true);
+      disarm("fw-save-changes", dispose);
       overlay.remove();
+    };
+    const finish = (value: "save" | "discard" | "cancel"): void => {
+      dispose();
       resolve(value);
     };
     const onKey = (e: KeyboardEvent): void => {
+      if (isImeComposing(e)) return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -198,6 +265,7 @@ export function saveChangesModal(opts: {
       }
     };
     document.addEventListener("keydown", onKey, true);
+    arm("fw-save-changes", () => finish("cancel"));
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay) finish("cancel");
     });
@@ -221,32 +289,37 @@ export function confirmModal(opts: {
 }): Promise<boolean> {
   const { title, message, okLabel = "OK", danger = false } = opts;
   return new Promise((resolve) => {
-    document.getElementById("fw-confirm")?.remove();
+    preempt("fw-confirm");
 
     const overlay = document.createElement("div");
     overlay.id = "fw-confirm";
     overlay.className = "fw-modal-overlay";
     overlay.innerHTML = `
-      <div class="fw-modal" role="alertdialog" aria-modal="true" aria-label="${title}">
-        <h2>${title}</h2>
-        <p class="fw-alert-message">${message}</p>
+      <div class="fw-modal" role="alertdialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+        <h2>${escapeHtml(title)}</h2>
+        <p class="fw-alert-message">${escapeHtml(message)}</p>
         <div class="actions">
           <button id="fw-confirm-cancel" type="button">Cancel</button>
-          <button id="fw-confirm-ok" type="button" class="primary${danger ? " danger" : ""}">${okLabel}</button>
+          <button id="fw-confirm-ok" type="button" class="primary${danger ? " danger" : ""}">${escapeHtml(okLabel)}</button>
         </div>
       </div>
     `;
     document.body.appendChild(overlay);
 
     let done = false;
-    const finish = (value: boolean): void => {
+    const dispose = (): void => {
       if (done) return;
       done = true;
       document.removeEventListener("keydown", onKey, true);
+      disarm("fw-confirm", dispose);
       overlay.remove();
+    };
+    const finish = (value: boolean): void => {
+      dispose();
       resolve(value);
     };
     const onKey = (e: KeyboardEvent): void => {
+      if (isImeComposing(e)) return;
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
@@ -258,6 +331,7 @@ export function confirmModal(opts: {
       }
     };
     document.addEventListener("keydown", onKey, true);
+    arm("fw-confirm", () => finish(false));
     overlay.addEventListener("click", (e) => {
       if (e.target === overlay) finish(false);
     });

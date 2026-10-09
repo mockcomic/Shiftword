@@ -23,6 +23,11 @@ import { Cursors } from "./cursors";
 import { HardBreak } from "./hard-break";
 import { Link } from "./link";
 import { Callout, CodeBlock, Divider, Quote, TaskItem, TaskList } from "./blocks";
+import { FootnoteRef } from "./footnotes";
+import { TrackedDelete, TrackedInsert, ReviewTracking } from "./review";
+import { CommentMarkExtension } from "./comments";
+import { HeaderFooter } from "../features/header-footer";
+import { FindReplace } from "../features/find-replace";
 import { SlashMenu } from "../features/slash-menu";
 import { BubbleToolbar } from "../features/bubble-toolbar";
 import { BlockHandle } from "../features/block-handle";
@@ -83,8 +88,12 @@ export function createExtensions() {
             parseHTML: (element: HTMLElement) => {
               const lh = element.style.getPropertyValue("line-height");
               if (!lh) return 1;
+              // Only unitless ratios round-trip through this attr: an
+              // imported `line-height: 18px` must not become 18 (an
+              // eighteen-times spacing), it simply does not map.
+              if (/px|em|rem|pt|%/.test(lh)) return 1;
               const n = parseFloat(lh);
-              return Number.isFinite(n) && n > 0 ? n : 1;
+              return Number.isFinite(n) && n > 0 && n <= 5 ? n : 1;
             },
             renderHTML: (attrs: { lineSpacing?: number }) => {
               const ls = Number(attrs.lineSpacing) || 1;
@@ -129,6 +138,16 @@ export function createExtensions() {
     Quote,
     Divider,
     CodeBlock,
+    // Feature set: footnotes (inline atom + page-end note area), Word-style
+    // comments (mark + doc-attr store) and track changes (marks + capture
+    // plugin). All of them live in the document JSON — see schema.ts.
+    FootnoteRef,
+    CommentMarkExtension,
+    TrackedInsert,
+    TrackedDelete,
+    ReviewTracking,
+    HeaderFooter,
+    FindReplace,
     // Tables (imported from .docx via table/td/th markup; inserted via toolbar).
     // Resizable: the drag handle comes from prosemirror-tables' columnResizing,
     // which @tiptap/extension-table installs through the table node view; widths

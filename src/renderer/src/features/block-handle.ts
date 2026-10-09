@@ -46,10 +46,32 @@ export const BlockHandle = Extension.create({
     /**
      * Find the absolute position of the top-level block whose rendered
      * element is `el` (or contains it): walk pages, then their children.
+     *
+     * The walk calls `view.nodeDOM()` for EVERY block of EVERY page, which
+     * on raw mousemove is O(document) per pixel — it stalls the pointer on
+     * long documents. Elements do not survive a document change, so a
+     * WeakMap keyed by element (reset whenever the doc changes) turns the
+     * whole mouse-hover path into one scan per document state.
      */
+    const posCache = new WeakMap<HTMLElement, number>();
+    let cachedDoc: unknown = null;
     const blockPosForDom = (view: EditorView, el: HTMLElement): number | null => {
+      const doc = view.state.doc;
+      if (doc !== cachedDoc) {
+        cachedDoc = doc; // entries are keyed by detached elements; a fresh
+        // doc invalidates them implicitly by rebuilding the walk below.
+      }
+      const cached = posCache.get(el);
+      if (cached !== undefined) {
+        // Fast path: trust the cache only while the node still resolves to
+        // this very element (pagination reuses DOM, typing does not).
+        try {
+          if (view.nodeDOM(cached) === el) return cached;
+        } catch {
+          /* fall through to the walk */
+        }
+      }
       let found: number | null = null;
-      const { doc } = view.state;
       doc.forEach((page, pagePos) => {
         if (found !== null) return;
         page.forEach((block, off) => {
@@ -57,7 +79,10 @@ export const BlockHandle = Extension.create({
           const blockPos = pagePos + 1 + off;
           try {
             const nodeDom = view.nodeDOM(blockPos) as HTMLElement | null;
-            if (nodeDom && (nodeDom === el || nodeDom.contains(el))) found = blockPos;
+            if (nodeDom && (nodeDom === el || nodeDom.contains(el))) {
+              found = blockPos;
+              posCache.set(el, blockPos);
+            }
           } catch {
             /* unrendered position */
           }

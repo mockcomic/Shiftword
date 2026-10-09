@@ -139,6 +139,35 @@ describe("workspace store", () => {
     expect(await ws.readPage(meta!.id)).toBeNull();
   });
 
+  it("does not lose updates when an autosave races a create/rename", async () => {
+    // The bug class: every mutator read pages.json, mutated its snapshot and
+    // wrote the whole file back — a writePage in flight could clobber a
+    // createPage that landed between its read and its write (the new page
+    // silently vanished while writePage reported success). Mutations are now
+    // serialized behind one promise chain, so interleaved operations all
+    // survive.
+    const existing = (await ws.createPage({ title: "Existing" }))!;
+    const doc = {
+      type: "doc",
+      attrs: {},
+      content: [
+        { type: "page", content: [{ type: "paragraph", content: [{ type: "text", text: "typed" }] }] },
+      ],
+    };
+    const [writeRes, created, renamed] = await Promise.all([
+      ws.writePage(existing.id, doc),
+      ws.createPage({ title: "Racer" }),
+      ws.renamePage(existing.id, { title: "Renamed" }),
+    ]);
+    expect(writeRes).toEqual({});
+    expect(created).toBeTruthy();
+    expect(renamed).toBeTruthy();
+    const titles = (await ws.listPages()).map((p) => p.title).sort();
+    expect(titles).toEqual(["Racer", "Renamed"]);
+    const read = await ws.readPage(existing.id);
+    expect(JSON.stringify(read?.json)).toContain("typed");
+  });
+
   it("opens a metadata-only page as a clean document", async () => {
     const meta = (await ws.createPage({ title: "Docless" }))!;
     const file = join(userDataDir, "workspace", `${meta.id}.json`);

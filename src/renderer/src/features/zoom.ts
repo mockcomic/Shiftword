@@ -1,5 +1,5 @@
 import type { Editor } from "@tiptap/core";
-import { runPagination } from "../editor/pagination";
+import { invalidateMeasureCache, runPagination } from "../editor/pagination";
 
 /** Zoom levels offered in the toolbar (percent). */
 export const ZOOM_STEPS = [50, 75, 90, 100, 110, 125, 150, 200] as const;
@@ -21,6 +21,8 @@ export function setZoom(percent: number, editor?: Editor): void {
   currentZoom = clamped;
   const el = document.querySelector<HTMLElement>("#editor");
   if (el) el.style.zoom = String(clamped / 100);
+  // Measured block heights are zoom-dependent — forget the cached ones.
+  invalidateMeasureCache();
   if (editor) runPagination(editor);
 }
 

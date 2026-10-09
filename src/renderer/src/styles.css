@@ -1249,3 +1249,309 @@ body[data-theme="dark"] .side-row.drop-after {
 body[data-theme="dark"] .side-row.drop-child {
   outline-color: #d4d4d4;
 }
+
+/* ==================================================================== */
+/* Find & Replace                                                        */
+/* ==================================================================== */
+.fw-find-panel {
+  position: fixed;
+  top: 48px;
+  right: 16px;
+  z-index: 60;
+  background: #ffffff;
+  border: 1px solid #c8c8c8;
+  border-radius: 6px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.fw-find-panel .fr-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.fw-find-panel .fr-replace-row {
+  display: none;
+}
+
+.fw-find-panel.with-replace .fr-replace-row {
+  display: flex;
+}
+
+.fw-find-panel input {
+  width: 190px;
+  height: 26px;
+  border: 1px solid #c8c8c8;
+  border-radius: 3px;
+  padding: 0 6px;
+  font: inherit;
+  background: #fff;
+  color: #1e1e1e;
+}
+
+.fw-find-panel button {
+  height: 26px;
+  min-width: 26px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+.fw-find-panel button:hover {
+  background: #e8e8e8;
+}
+
+.fw-find-panel .fr-toggle.active {
+  background: #cfe4ff;
+  border-color: #7ab0e8;
+}
+
+.fw-find-panel .fr-count {
+  min-width: 56px;
+  text-align: center;
+  color: #666;
+}
+
+.fw-find-panel .fr-count.empty {
+  color: #b00020;
+}
+
+.fw-match {
+  background: #ffe27a;
+  border-radius: 2px;
+}
+
+.fw-match-active {
+  background: #ffb020;
+  outline: 1px solid #c47f00;
+}
+
+body[data-theme="dark"] .fw-find-panel {
+  background: #2b2b2b;
+  border-color: #444;
+  color: #d4d4d4;
+}
+
+body[data-theme="dark"] .fw-find-panel input {
+  background: #333;
+  border-color: #444;
+  color: #d4d4d4;
+}
+
+body[data-theme="dark"] .fw-find-panel button:hover {
+  background: #3d3d3d;
+}
+
+/* ==================================================================== */
+/* Headers & footers + page-end footnotes                                */
+/* ==================================================================== */
+.fw-page {
+  position: relative;
+}
+
+.fw-page-header,
+.fw-page-footer {
+  position: absolute;
+  left: var(--m-l, 25.4mm);
+  right: var(--m-r, 25.4mm);
+  font-size: 9pt;
+  color: #555;
+  white-space: pre-wrap;
+  user-select: none;
+}
+
+.fw-page-header {
+  top: 10mm;
+}
+
+.fw-page-footer {
+  bottom: 10mm;
+}
+
+.fw-band-center {
+  text-align: center;
+}
+
+.fw-band-right {
+  text-align: right;
+}
+
+.fw-page-footnotes {
+  position: absolute;
+  left: var(--m-l, 25.4mm);
+  right: var(--m-r, 25.4mm);
+  bottom: 14mm;
+  font-size: 9pt;
+  color: #333;
+  background: transparent;
+}
+
+.fw-fn-rule {
+  border: none;
+  border-top: 1px solid #999;
+  width: 33%;
+  margin: 0 0 4px;
+}
+
+.fw-fn-entry {
+  margin: 0 0 2px;
+}
+
+.fw-fn-ref {
+  font-size: 0.72em;
+  vertical-align: super;
+  color: #0b57d0;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Notion mode has no page bands; the note area just trails the flow. */
+body.notion-mode .fw-page-header,
+body.notion-mode .fw-page-footer {
+  display: none;
+}
+
+body.notion-mode .fw-page-footnotes {
+  position: static;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--nw-muted, #6b6b6b);
+}
+
+/* ==================================================================== */
+/* Comments                                                              */
+/* ==================================================================== */
+.fw-comment {
+  background: rgba(255, 214, 0, 0.28);
+  border-bottom: 1px solid rgba(255, 149, 0, 0.8);
+  cursor: pointer;
+}
+
+.fw-comment-resolved {
+  background: transparent;
+  border-bottom: none;
+}
+
+#fw-comments {
+  position: fixed;
+  top: 46px;
+  right: 0;
+  bottom: 26px;
+  width: 300px;
+  z-index: 55;
+  background: #ffffff;
+  border-left: 1px solid #d0d0d0;
+  box-shadow: -2px 0 10px rgba(0, 0, 0, 0.08);
+  overflow-y: auto;
+  padding: 10px;
+  font-size: 12px;
+}
+
+#fw-comments h2 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #444;
+}
+
+.fw-comment-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.fw-comment-card.resolved {
+  opacity: 0.55;
+}
+
+.fw-comment-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.fw-comment-card time {
+  color: #888;
+  font-size: 11px;
+}
+
+.fw-comment-card p {
+  margin: 0 0 6px;
+  white-space: pre-wrap;
+}
+
+.fw-comment-card footer {
+  display: flex;
+  gap: 4px;
+}
+
+.fw-comment-card footer button {
+  border: 1px solid #d0d0d0;
+  background: #fafafa;
+  border-radius: 3px;
+  padding: 2px 7px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.fw-comment-card footer button:hover {
+  background: #efefef;
+}
+
+.fw-comments-empty {
+  color: #888;
+}
+
+body[data-theme="dark"] #fw-comments {
+  background: #252526;
+  border-left-color: #3c3c3c;
+  color: #d4d4d4;
+}
+
+body[data-theme="dark"] .fw-comment-card {
+  border-color: #3c3c3c;
+}
+
+body[data-theme="dark"] .fw-comment-card footer button {
+  background: #333;
+  border-color: #444;
+  color: #d4d4d4;
+}
+
+/* ==================================================================== */
+/* Track changes                                                         */
+/* ==================================================================== */
+.fw-ins {
+  color: #1a7f37;
+  text-decoration: underline;
+}
+
+.fw-del {
+  color: #b00020;
+  text-decoration: line-through;
+}
+
+.sb-track {
+  color: #1a7f37;
+  font-weight: 600;
+  margin-right: 6px;
+}
+
+/* Multi-line prompts (footnote/comment modals). */
+.fw-modal textarea {
+  width: 100%;
+  border: 1px solid #c8c8c8;
+  border-radius: 3px;
+  padding: 5px 6px;
+  font: inherit;
+  resize: vertical;
+}

@@ -193,9 +193,18 @@ export const TaskItem = Node.create({
       }
 
       // Split the text across the current and a fresh (unchecked) item.
-      const itemSchema = editor.state.schema;
-      const prevItem = item.type.create({ ...item.attrs }, paragraphWith(itemSchema, before));
-      const nextItem = item.type.create({ ...item.attrs, checked: false }, paragraphWith(itemSchema, after));
+      // Cut the ACTUAL paragraph node — going through `textBetween` used to
+      // rebuild plain-text paragraphs and silently stripped bold, links,
+      // comment marks and inline atoms (hard breaks, footnote refs) from the
+      // split text.
+      const para = $from.parent;
+      const beforeFrag = para.content.cut(0, $from.parentOffset);
+      const afterFrag = para.content.cut($from.parentOffset, para.content.size);
+      const prevItem = item.type.create({ ...item.attrs }, para.type.create(null, beforeFrag));
+      const nextItem = item.type.create(
+        { ...item.attrs, checked: false },
+        para.type.create(null, afterFrag),
+      );
       const tr = state.tr.replaceWith(itemPos, itemPos + item.nodeSize, [prevItem, nextItem]);
       const nextStart = itemPos + prevItem.nodeSize + 1;
       tr.setSelection(TextSelection.near(tr.doc.resolve(nextStart)));

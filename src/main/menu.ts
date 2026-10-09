@@ -27,13 +27,15 @@ function showAbout(): void {
     title: "About FreeWord",
     message: `FreeWord ${app.getVersion()}`,
     detail:
-      "An offline Word-like document editor.\n\n" +
+      "An offline Word-like document editor with find & replace, headers &\n" +
+      "footers, footnotes, comments and track changes.\n\n" +
       "Known limitations:\n" +
       "• WebP images are not supported (use PNG, JPEG, GIF, or BMP).\n" +
-      "• Images cannot be resized after inserting them.\n" +
       "• A block taller than one page may be clipped in PDF export.\n" +
       "• Forced page breaks in imported .docx files may be re-paginated.\n" +
-      "• No find & replace, headers/footers, footnotes or track changes yet.",
+      "• Headers/footers, footnotes, comments and tracked changes round-trip\n" +
+      "  from FreeWord's own exports; files authored in other editors import\n" +
+      "  as best-effort plain content.",
     buttons: ["OK"],
   };
   const win = getWindow();
@@ -116,7 +118,10 @@ export async function rebuildMenu(): Promise<void> {
     recent.length === 0
       ? [{ label: "(none)", enabled: false }]
       : recent.slice(0, 8).map((entry) => ({
-          label: entry.name,
+          // `&` is a menu mnemonic in buildFromTemplate — a file named
+          // "Q&A draft.txt" would render as "QA draft.txt" with an
+          // underlined A. `&&` is the literal ampersand escape.
+          label: entry.name.replace(/&/g, "&&"),
           click: () => send("recent:open", entry.path),
         }));
 
@@ -150,10 +155,17 @@ export async function rebuildMenu(): Promise<void> {
         { role: "undo" },
         { role: "redo" },
         { type: "separator" },
+        { label: "Find…", accelerator: "CmdOrCtrl+F", click: () => send("edit:find") },
+        { label: "Find Next", accelerator: "F3", click: () => send("edit:findNext") },
+        { label: "Find Previous", accelerator: "Shift+F3", click: () => send("edit:findPrev") },
+        { label: "Replace…", accelerator: "CmdOrCtrl+H", click: () => send("edit:replace") },
+        { type: "separator" },
         { role: "cut" },
         { role: "copy" },
         { role: "paste" },
         { role: "selectAll" },
+        { type: "separator" },
+        { label: "Author Name…", click: () => send("edit:authorName") },
       ],
     },
     {
@@ -197,6 +209,11 @@ export async function rebuildMenu(): Promise<void> {
         },
         { type: "separator" },
         { label: "Page Setup…", click: () => send("view:pageSetup") },
+        {
+          label: "Comments Panel",
+          accelerator: "CmdOrCtrl+Alt+C",
+          click: () => send("view:comments"),
+        },
       ],
     },
     {
@@ -204,8 +221,26 @@ export async function rebuildMenu(): Promise<void> {
       submenu: [
         { label: "Table", accelerator: "CmdOrCtrl+Alt+T", click: () => send("insert:table") },
         { label: "Image…", click: () => send("insert:image") },
+        { label: "Footnote", accelerator: "CmdOrCtrl+Alt+F", click: () => send("insert:footnote") },
+        { label: "Header & Footer…", click: () => send("insert:headerFooter") },
         { type: "separator" },
         { label: "Page Break", accelerator: "CmdOrCtrl+Enter", click: () => send("insert:pageBreak") },
+      ],
+    },
+    {
+      label: "Review",
+      submenu: [
+        {
+          label: "Track Changes",
+          accelerator: "CmdOrCtrl+Shift+M",
+          click: () => send("review:toggleTrack"),
+        },
+        { type: "separator" },
+        { label: "Accept Change at Cursor", click: () => send("review:acceptAt") },
+        { label: "Reject Change at Cursor", click: () => send("review:rejectAt") },
+        { type: "separator" },
+        { label: "Accept All Changes", click: () => send("review:acceptAll") },
+        { label: "Reject All Changes", click: () => send("review:rejectAll") },
       ],
     },
     {

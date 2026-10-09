@@ -1,5 +1,5 @@
 import type { Editor } from "@tiptap/core";
-import type { Node as PMNode } from "@tiptap/pm/model";
+import type { Node as PMNode, Schema } from "@tiptap/pm/model";
 import { TextSelection } from "@tiptap/pm/state";
 import { BLOCK_NODE_NAMES, paragraphsFromText } from "./blocks";
 
@@ -83,8 +83,27 @@ function simpleBlock(typeName: string, attrs?: Record<string, unknown>) {
     replaceTopBlock(editor, text, (ed, t) => {
       const type = ed.state.schema.nodes[typeName];
       if (!type) return null;
+      // A `paragraph` accepts inline content only — wrapping it in
+      // `paragraphsFromText` produced schema-invalid `p > p` nodes (`.create`
+      // skips validation, so they persisted into the DOMSerializer, the HTML
+      // round-trip and the .docx exporter). Block containers (quote, callout)
+      // do want the paragraphs.
+      if (typeName === "paragraph") return paragraphsFromText(ed.state.schema, t);
       return [type.create(attrs ?? null, paragraphsFromText(ed.state.schema, t))];
     });
+}
+
+/**
+ * One heading node per line. A heading's content is `inline*` — passing the
+ * paragraph NODES from `paragraphsFromText` built a schema-invalid
+ * `h1 > p` tree (silent because `.create` skips validation); the heading's
+ * own text nodes are the same paragraphs' content.
+ */
+function headingsFromText(schema: Schema, level: number, text: string): PMNode[] {
+  const heading = schema.nodes["heading"];
+  if (!heading) return [];
+  const lines = text ? text.split("\n") : [""];
+  return lines.map((line) => heading.create({ level }, line ? schema.text(line) : null));
 }
 
 export const BLOCK_DEFS: BlockDef[] = [
@@ -101,11 +120,7 @@ export const BLOCK_DEFS: BlockDef[] = [
     icon: "H1",
     keywords: "title heading big section",
     apply: (editor, text) =>
-      replaceTopBlock(editor, text, (ed, t) => {
-        const type = ed.state.schema.nodes["heading"];
-        if (!type) return null;
-        return [type.create({ level: 1 }, paragraphsFromText(ed.state.schema, t).slice(0, 1))];
-      }),
+      replaceTopBlock(editor, text, (ed, t) => headingsFromText(ed.state.schema, 1, t)),
   },
   {
     id: "heading2",
@@ -113,11 +128,7 @@ export const BLOCK_DEFS: BlockDef[] = [
     icon: "H2",
     keywords: "subtitle heading section",
     apply: (editor, text) =>
-      replaceTopBlock(editor, text, (ed, t) => {
-        const type = ed.state.schema.nodes["heading"];
-        if (!type) return null;
-        return [type.create({ level: 2 }, paragraphsFromText(ed.state.schema, t).slice(0, 1))];
-      }),
+      replaceTopBlock(editor, text, (ed, t) => headingsFromText(ed.state.schema, 2, t)),
   },
   {
     id: "heading3",
@@ -125,11 +136,7 @@ export const BLOCK_DEFS: BlockDef[] = [
     icon: "H3",
     keywords: "subtitle heading small section",
     apply: (editor, text) =>
-      replaceTopBlock(editor, text, (ed, t) => {
-        const type = ed.state.schema.nodes["heading"];
-        if (!type) return null;
-        return [type.create({ level: 3 }, paragraphsFromText(ed.state.schema, t).slice(0, 1))];
-      }),
+      replaceTopBlock(editor, text, (ed, t) => headingsFromText(ed.state.schema, 3, t)),
   },
   {
     id: "bulletList",

@@ -34,6 +34,38 @@ const RAW_FORMATS: Record<SaveRawPayload["ext"], { label: string; extensions: st
 /** Anything larger is a mistake or an attack, not a document: reading it would hang the renderer. */
 const MAX_OPEN_BYTES = 100 * 1024 * 1024;
 
+/**
+ * Paths the main process itself handed to the renderer (dialog results and
+ * files read through `file:open`), plus everything in the recent store.
+ * `docx:save` / `file:saveRaw` only accept a renderer-supplied `path` that is
+ * one of these — the renderer cannot invent an arbitrary write target.
+ */
+const issuedPaths = new Set<string>();
+
+function rememberSavedPath(filePath: string): void {
+  issuedPaths.add(samePathKey(filePath));
+  if (issuedPaths.size > 512) {
+    // FIFO-ish bound; the set is a convenience cache, the recent store is durable.
+    const oldest = issuedPaths.values().next();
+    if (!oldest.done) issuedPaths.delete(oldest.value);
+  }
+}
+
+function samePathKey(p: string): string {
+  const resolved = path.resolve(p);
+  return process.platform === "win32" || process.platform === "darwin" ? resolved.toLowerCase() : resolved;
+}
+
+async function isUserChosenPath(filePath: string, ext: string): Promise<boolean> {
+  if (!path.isAbsolute(filePath)) return false;
+  const fileExt = path.extname(filePath).toLowerCase().replace(/^\./, "") || ext;
+  const allowedExts = ext === "docx" ? ["docx"] : RAW_FORMATS[ext as "txt" | "html"]?.extensions ?? [ext];
+  if (!allowedExts.includes(fileExt)) return false;
+  if (issuedPaths.has(samePathKey(filePath))) return true;
+  const recents = await readRecent();
+  return recents.some((r) => samePath(r.path, filePath));
+}
+
 function sleep(ms: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, ms);
@@ -113,6 +145,21 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
       dialog.showErrorBox("Unsupported format", `Files with the extension .${ext} are not supported.`);
       return null;
     }
+    // Check the size BEFORE buffering: without this a 2 GB file is read (and
+    // then structured-cloned over IPC) only to be rejected at the cap.
+    const st = await stat(filePath).catch((err: unknown) => {
+      dialog.showErrorBox("Could not open file", `"${path.basename(filePath!)}" could not be read:\n${messageOf(err)}`);
+      return null;
+    });
+    if (!st) return null;
+    if (st.size > MAX_OPEN_BYTES) {
+      dialog.showErrorBox(
+        "File too large",
+        `"${path.basename(filePath)}" is ${Math.round(st.size / (1024 * 1024))} MB. ` +
+          `Documents larger than ${Math.round(MAX_OPEN_BYTES / (1024 * 1024))} MB are not supported.`,
+      );
+      return null;
+    }
     const buffer = await readFile(filePath).catch((err: unknown) => {
       dialog.showErrorBox(
         "Could not open file",
@@ -121,17 +168,9 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
       return null;
     });
     if (!buffer) return null;
-    if (buffer.byteLength > MAX_OPEN_BYTES) {
-      dialog.showErrorBox(
-        "File too large",
-        `"${path.basename(filePath)}" is ${Math.round(buffer.byteLength / (1024 * 1024))} MB. ` +
-          `Documents larger than ${Math.round(MAX_OPEN_BYTES / (1024 * 1024))} MB are not supported.`,
-      );
-      return null;
-    }
-    const st = await stat(filePath).catch(() => null);
     const name = path.basename(filePath);
-    if (st) await upsertRecent({ path: filePath, name, mtimeMs: st.mtimeMs });
+    await upsertRecent({ path: filePath, name, mtimeMs: st.mtimeMs });
+    rememberSavedPath(filePath);
     onFilesChanged();
     return {
       path: filePath,
@@ -148,6 +187,16 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
       const win = getWindow();
       if (!win) return null;
       let filePath = payload.path;
+      // A renderer-supplied path must be one main has already handed back from
+      // a dialog or found in the recent store — otherwise a compromised page
+      // could write arbitrary bytes to any user-writable location.
+      if (filePath && !(await isUserChosenPath(filePath, "docx"))) {
+        dialog.showErrorBox(
+          "Could not save document",
+          `"${filePath}" was not chosen through a save dialog, so it was not written.`,
+        );
+        return { error: "Unrecognized save path." };
+      }
       if (!filePath) {
         const result = await dialog.showSaveDialog(win, {
           defaultPath: payload.defaultName,
@@ -155,6 +204,7 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
         });
         if (result.canceled || !result.filePath) return null;
         filePath = result.filePath;
+        rememberSavedPath(filePath);
       }
       const buf = await toDocxBuffer(payload.json).catch((err: unknown) => {
         dialog.showErrorBox(
@@ -200,6 +250,13 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
     if (typeof payload.content !== "string") return { error: "Nothing to write." };
 
     let filePath = payload.path;
+    if (filePath && !(await isUserChosenPath(filePath, payload.ext))) {
+      dialog.showErrorBox(
+        "Could not export",
+        `"${filePath}" was not chosen through a save dialog, so it was not written.`,
+      );
+      return { error: "Unrecognized export path." };
+    }
     if (!filePath) {
       const result = await dialog.showSaveDialog(win, {
         defaultPath: payload.defaultName,
@@ -207,6 +264,7 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
       });
       if (result.canceled || !result.filePath) return null;
       filePath = result.filePath;
+      rememberSavedPath(filePath);
     }
     try {
       await writeFile(filePath, payload.content, "utf8");
@@ -263,14 +321,21 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
     await sleep(100);
     try {
       // The system print dialog handles the user's choice (print or cancel).
-      await new Promise<void>((resolve) => {
-        win.webContents.print({ silent: false, printBackground: true }, () => resolve());
+      // Electron's callback reports `(success, failureReason)` — the old code
+      // dropped both, so a failed print answered `{}` ("success"). A cancel
+      // is a normal way to end printing: report it as success without a job.
+      const outcome = await new Promise<PrintResult>((resolve) => {
+        win.webContents.print({ silent: false, printBackground: true }, (success, failureReason) => {
+          if (success) resolve({});
+          else if ((failureReason ?? "").toLowerCase().startsWith("cancel")) resolve({});
+          else resolve({ error: failureReason || "Printing failed." });
+        });
       });
+      return outcome;
     } catch (err) {
       dialog.showErrorBox("Could not print", `Printing failed:\n${messageOf(err)}`);
       return { error: messageOf(err) };
     }
-    return {};
   });
 
   ipcMain.handle("file:pickImage", async (event) => {
@@ -288,12 +353,17 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
     });
     if (result.canceled || result.filePaths.length === 0) return null;
     const filePath = result.filePaths[0];
+    const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+    const st = await stat(filePath).catch(() => null);
+    if (st && st.size > MAX_IMAGE_BYTES) {
+      dialog.showErrorBox("Image too large", "Images larger than 10 MB are not supported.");
+      return null;
+    }
     const buffer = await readFile(filePath).catch((err: unknown) => {
       dialog.showErrorBox("Could not read image", `"${path.basename(filePath)}":\n${messageOf(err)}`);
       return null;
     });
     if (!buffer) return null;
-    const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
     if (buffer.byteLength > MAX_IMAGE_BYTES) {
       dialog.showErrorBox("Image too large", "Images larger than 10 MB are not supported.");
       return null;
@@ -335,7 +405,12 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
     }
   });
 
-  ipcMain.handle("recent:get", () => readRecent());
+  ipcMain.handle("recent:get", async (event) => {
+    // Recent entries carry real user paths — same main-frame-only rule as
+    // every other handler (this was the one handler without it).
+    if (!trustedSender(event, getWindow)) return [];
+    return readRecent();
+  });
 
   // Settings (Notion mode / theme / sidebar). The patch is filtered
   // key-by-key in settings.ts, so the renderer cannot smuggle in new keys.
@@ -353,6 +428,12 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
       if (typeof patch.toolbarPinned === "boolean") safe.toolbarPinned = patch.toolbarPinned;
       if (patch.theme === "light" || patch.theme === "dark" || patch.theme === "system") {
         safe.theme = patch.theme;
+      }
+      // The whitelist used to omit authorName, so Edit → Author Name… was a
+      // no-op: the patch reached settings.ts without the key and the old
+      // value was written straight back.
+      if (typeof patch.authorName === "string" && patch.authorName.trim()) {
+        safe.authorName = patch.authorName.trim().slice(0, 120);
       }
     }
     const next = await writeSettings(safe);

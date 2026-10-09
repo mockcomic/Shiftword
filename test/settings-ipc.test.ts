@@ -65,6 +65,8 @@ describe("settings:get", () => {
       theme: "light",
       sidebarOpen: false,
       toolbarPinned: false,
+      // Defaults to the OS user name — which differs between runners.
+      authorName: expect.any(String),
     });
   });
 
@@ -94,7 +96,13 @@ describe("settings:get", () => {
 describe("settings:set", () => {
   it("merges the patch, persists it, and answers the full merged settings", async () => {
     const next = await call("settings:set", { notionMode: true, theme: "dark" });
-    expect(next).toEqual({ notionMode: true, theme: "dark", sidebarOpen: false, toolbarPinned: false });
+    expect(next).toEqual({
+      notionMode: true,
+      theme: "dark",
+      sidebarOpen: false,
+      toolbarPinned: false,
+      authorName: expect.any(String),
+    });
     const raw = JSON.parse(await readFile(join(userDataDir, "settings.json"), "utf8"));
     expect(raw.notionMode).toBe(true);
     expect(raw.theme).toBe("dark");

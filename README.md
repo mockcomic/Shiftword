@@ -45,6 +45,22 @@ stay on your machine.
   word under the cursor (Electron ships no context menu of its own)
 - **Zoom** 50–200% (Ctrl+= / Ctrl+- step beyond the presets, 25–400%),
   built-in spell check, recent files list
+- **Find & Replace** (Ctrl+F / Ctrl+H): highlighted matches with a
+  next/prev counter, match-case toggle, Replace and Replace-All (one undo
+  step reverts the whole batch)
+- **Headers & footers** (Insert → Header & Footer…): text on every page with
+  `{{page}}` / `{{pages}}` tokens; exported as real Word headers/footers with
+  live PAGE/NUMPAGES fields
+- **Footnotes** (Insert → Footnote, Ctrl+Alt+F): auto-numbered inline refs
+  with the note list at the bottom of the page; exported to real
+  `word/footnotes.xml` references
+- **Comments** (select text → 💬): threads anchored by a mark, with a
+  right-hand Comments panel (View → Comments Panel, Ctrl+Alt+C) for jump /
+  edit / resolve / delete; exported as native Word comments
+- **Track changes** (Review → Track Changes, Ctrl+Shift+M): insertions and
+  deletions recorded with author + date, accept/reject per change or all at
+  once; exported as native `w:ins`/`w:del` so Word's own Review pane shows
+  them
 
 ## Getting started
 
@@ -83,6 +99,10 @@ schema stays `doc → page → blocks` either way:
   re-partitions the document in one pass.
 - Print/PDF always renders the Word form first (`beginPrintAppearance()` in
   `features/appearance.ts`), even when triggered from Notion mode.
+- Header/footer bands are Word-mode rendering chrome (hidden in Notion mode
+  via CSS, like the ribbon); the page-end footnote areas re-flow to trail
+  the continuous canvas instead. Find/replace, comments and tracked changes
+  behave identically in both modes — they live in the same document model.
 - Settings (`notionMode`, `theme`, `sidebarOpen`, `toolbarPinned`) persist to
   `userData/settings.json` via `settings:get` / `settings:set` IPC.
 - Workspace pages live in `userData/workspace/`: `pages.json` (metadata:
@@ -192,7 +212,8 @@ warning on first launch.
 src/
   main/            Electron main process
     index.ts       app lifecycle, window creation, navigation guards, --smoke-test
-    menu.ts        native menu (File / Edit / View / Insert / Help) + right-click menu
+    menu.ts        native menu (File / Edit / View / Insert / Review / Help)
+                   + right-click menu
     ipc.ts         IPC handlers (open / save / save-raw / PDF / print / image /
                    external URL / settings / workspace pages)
     docx-export.ts FreeWord JSON → .docx (docx library)
@@ -207,15 +228,22 @@ src/
                    workspace pages + autosave
       editor/
         extensions.ts  Tiptap schema (custom doc → page → blocks)
-        schema.ts      doc / page / pageBreak nodes
+        schema.ts      doc / page / pageBreak nodes (doc attrs: page setup,
+                       header/footer text, trackChanges flag, comment store)
         blocks.ts      task lists, callout, quote, divider, code block
+        footnotes.ts   footnoteRef inline atom + page-end note area
+        review.ts      tracked-insert / tracked-delete marks + capture plugin
+        comments.ts    the comment mark + thread store helpers
+        mark-edit.ts   per-mark removal (accept/reject, delete comment)
         block-utils.ts shared block catalog (slash menu / turn-into / style select)
         code.ts, link.ts, hard-break.ts   inline primitives (hand-rolled)
         cursors.ts     drop + gap cursors
-        pagination.ts  live pagination engine (blocks never split; pausable)
+        pagination.ts  live pagination engine (blocks never split; pausable;
+                       reserves the header/footer bands' height)
         create-editor.ts
       features/      toolbar, slash menu, bubble toolbar, block handle,
                      sidebar, quick switcher, status bar, page-setup modal,
+                     find-replace panel, header-footer modal, comments panel,
                      prompt/alert/confirm modals, zoom, image insert, link clicks,
                      appearance (Notion mode / theme)
       io/
@@ -243,13 +271,21 @@ they round-trip back through export.
 - WebP images are not supported (use PNG / JPEG / GIF / BMP).
 - A single block taller than one page (e.g. a very large table) is kept whole
   and may extend past the page in PDF export.
-- Track changes, comments, headers/footers, footnotes, and find & replace
-  are not supported yet.
 - Autosave / crash recovery exists for **workspace pages** only: an unsaved
   `.docx` file document still lives only in the window.
 - To-do / callout / code-block fidelity in `.docx` is best-effort: Word itself
   sees checkbox glyphs, shaded paragraphs and monospace runs rather than the
   rich nodes (they re-hydrate when FreeWord re-opens its own export).
+- **Import** of the review features is best-effort: header/footer text comes
+  back with page-number fields rendered as their first-page number, footnotes
+  re-hydrate from FreeWord's own export, and comments / Word-native revisions
+  from other editors import as plain text. Files authored in Word or Google
+  Docs keep all their body content either way.
+- Track changes are character-level: deleting an image or a whole table
+  (while tracking is on) is an immediate delete, not a revision.
+- The note area at the bottom of a page is an overlay; a page filled edge to
+  edge may need the margins widened (View → Page Setup) for the notes to sit
+  clear of the text.
 
 ## License
 

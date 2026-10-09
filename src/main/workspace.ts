@@ -1,6 +1,5 @@
 import { app } from "electron";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
 import path from "node:path";
 import type { PageMeta, TrashEntry, WorkspacePage } from "../shared/types";
 import { MAX_PAGE_JSON_BYTES } from "../shared/types";
@@ -25,6 +24,25 @@ const SAFE_TRASH_FILE = /^[A-Za-z0-9_-]{4,140}\.json$/;
 /** How many trash entries the sidebar ever needs — older ones can be emptied on disk. */
 const MAX_TRASH_ENTRIES = 200;
 
+/**
+ * Serialize every store touch.
+ *
+ * Each operation reads `pages.json`, mutates it in memory, and writes the
+ * whole file back — so two operations running at once (an autosave flush
+ * racing a rename or a create) let the later writer clobber the earlier
+ * one's changes with its stale snapshot. A module-level promise chain makes
+ * each read-modify-write atomic with respect to the others in this process,
+ * which is the only writer (the app is single-instance).
+ */
+let storeLock: Promise<unknown> = Promise.resolve();
+function withStoreLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = storeLock.then(fn, fn);
+  // Keep the chain alive even if an operation rejects, and never let a
+  // rejection escape into an unhandled `storeLock` itself.
+  storeLock = run.catch(() => undefined);
+  return run;
+}
+
 function workspaceDir(): string {
   return path.join(app.getPath("userData"), "workspace");
 }
@@ -43,9 +61,16 @@ function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Ids reach us over IPC from the renderer — they must never steer a path. */
+/**
+ * Ids reach us over IPC from the renderer — they must never steer a path.
+ * `pages` (any casing — Windows/macOS volumes are case-insensitive) is
+ * rejected because doc files live next to `pages.json`, and `PAGES.json`
+ * would be that same file on a case-insensitive volume.
+ */
 function isValidId(id: unknown): id is string {
-  return typeof id === "string" && SAFE_ID.test(id) && id !== "pages";
+  return (
+    typeof id === "string" && SAFE_ID.test(path.basename(id)) && id.toLowerCase() !== "pages"
+  );
 }
 
 function initialDoc(): Record<string, unknown> {
@@ -85,9 +110,27 @@ async function readStore(): Promise<MetaStore> {
   }
 }
 
-async function writeStore(store: MetaStore): Promise<void> {
+async function ensureWorkspaceDir(): Promise<void> {
+  // No caching of "already created": the directory can disappear underneath
+  // us (manual cleanup, roaming-profile moves) and a stale flag would make
+  // every write fail with ENOENT forever. `mkdir -p` is idempotent.
   await mkdir(workspaceDir(), { recursive: true });
-  await writeFile(metaFile(), JSON.stringify({ pages: store.pages }, null, 2), "utf8");
+}
+
+async function writeStore(store: MetaStore): Promise<void> {
+  await ensureWorkspaceDir();
+  await writeFileAtomic(metaFile(), JSON.stringify({ pages: store.pages }, null, 2));
+}
+
+/**
+ * tmp + rename: an interrupted whole-file write would otherwise leave a
+ * half-written `pages.json`, which every reader treats as an empty store —
+ * silently erasing the user's page tree.
+ */
+async function writeFileAtomic(file: string, content: string): Promise<void> {
+  const tmp = `${file}.tmp`;
+  await writeFile(tmp, content, "utf8");
+  await rename(tmp, file);
 }
 
 function newId(): string {
@@ -96,26 +139,27 @@ function newId(): string {
 }
 
 export async function listPages(): Promise<PageMeta[]> {
-  const { pages } = await readStore();
-  return pages;
+  return withStoreLock(async () => (await readStore()).pages);
 }
 
 export async function readPage(id: string): Promise<WorkspacePage | null> {
   if (!isValidId(id)) return null;
-  const { pages } = await readStore();
-  const meta = pages.find((p) => p.id === id);
-  if (!meta) return null;
-  try {
-    const raw = await readFile(docFile(id), "utf8");
-    const json: unknown = JSON.parse(raw);
-    if (!json || typeof json !== "object" || (json as Record<string, unknown>).type !== "doc") {
+  return withStoreLock(async () => {
+    const { pages } = await readStore();
+    const meta = pages.find((p) => p.id === id);
+    if (!meta) return null;
+    try {
+      const raw = await readFile(docFile(id), "utf8");
+      const json: unknown = JSON.parse(raw);
+      if (!json || typeof json !== "object" || (json as Record<string, unknown>).type !== "doc") {
+        return { meta, json: initialDoc() };
+      }
+      return { meta, json: json as Record<string, unknown> };
+    } catch {
+      // Metadata outlived the doc file (or it never existed): open a clean page.
       return { meta, json: initialDoc() };
     }
-    return { meta, json: json as Record<string, unknown> };
-  } catch {
-    // Metadata outlived the doc file (or it never existed): open a clean page.
-    return { meta, json: initialDoc() };
-  }
+  });
 }
 
 export async function writePage(id: string, json: unknown): Promise<{ error?: string }> {
@@ -127,47 +171,53 @@ export async function writePage(id: string, json: unknown): Promise<{ error?: st
     return { error: "The document could not be serialized." };
   }
   if (serialized === undefined) return { error: "Nothing to save." };
-  if (serialized.length > MAX_PAGE_JSON_BYTES) {
+  // The cap is a BYTE budget; `serialized.length` counts UTF-16 units, which
+  // under-counts CJK/emoji content by up to 3x.
+  if (Buffer.byteLength(serialized, "utf8") > MAX_PAGE_JSON_BYTES) {
     return { error: `The page is larger than ${Math.round(MAX_PAGE_JSON_BYTES / (1024 * 1024))} MB.` };
   }
-  const { pages } = await readStore();
-  if (!pages.some((p) => p.id === id)) return { error: "Unknown page." };
-  try {
-    await mkdir(workspaceDir(), { recursive: true });
-    await writeFile(docFile(id), serialized, "utf8");
-    const meta = pages.find((p) => p.id === id)!;
-    meta.updatedAt = Date.now();
-    await writeStore({ pages });
-    return {};
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err) };
-  }
+  return withStoreLock(async () => {
+    const { pages } = await readStore();
+    if (!pages.some((p) => p.id === id)) return { error: "Unknown page." };
+    try {
+      await ensureWorkspaceDir();
+      await writeFileAtomic(docFile(id), serialized);
+      const meta = pages.find((p) => p.id === id)!;
+      meta.updatedAt = Date.now();
+      await writeStore({ pages });
+      return {};
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
+  });
 }
 
 export async function createPage(opts?: {
   title?: string;
   parentId?: string | null;
 }): Promise<PageMeta | null> {
-  const store = await readStore();
-  const parentId = opts?.parentId && store.pages.some((p) => p.id === opts.parentId) ? opts.parentId : null;
-  const siblings = store.pages.filter((p) => p.parentId === parentId);
-  const meta: PageMeta = {
-    id: newId(),
-    title: (opts?.title ?? "").trim() || "Untitled",
-    icon: "📄",
-    parentId,
-    order: siblings.length === 0 ? 0 : Math.max(...siblings.map((s) => s.order)) + 1,
-    updatedAt: Date.now(),
-  };
-  store.pages.push(meta);
-  try {
-    await mkdir(workspaceDir(), { recursive: true });
-    await writeStore(store);
-    await writeFile(docFile(meta.id), JSON.stringify(initialDoc()), "utf8");
-    return meta;
-  } catch {
-    return null;
-  }
+  return withStoreLock(async () => {
+    const store = await readStore();
+    const parentId = opts?.parentId && store.pages.some((p) => p.id === opts.parentId) ? opts.parentId : null;
+    const siblings = store.pages.filter((p) => p.parentId === parentId);
+    const meta: PageMeta = {
+      id: newId(),
+      title: (opts?.title ?? "").trim() || "Untitled",
+      icon: "📄",
+      parentId,
+      order: siblings.length === 0 ? 0 : Math.max(...siblings.map((s) => s.order)) + 1,
+      updatedAt: Date.now(),
+    };
+    store.pages.push(meta);
+    try {
+      await ensureWorkspaceDir();
+      await writeFileAtomic(docFile(meta.id), JSON.stringify(initialDoc()));
+      await writeStore(store);
+      return meta;
+    } catch {
+      return null;
+    }
+  });
 }
 
 export async function renamePage(
@@ -175,14 +225,16 @@ export async function renamePage(
   patch: { title?: string; icon?: string },
 ): Promise<PageMeta | null> {
   if (!isValidId(id)) return null;
-  const store = await readStore();
-  const meta = store.pages.find((p) => p.id === id);
-  if (!meta) return null;
-  if (typeof patch.title === "string" && patch.title.trim()) meta.title = patch.title.trim().slice(0, 200);
-  if (typeof patch.icon === "string" && [...patch.icon].length <= 4) meta.icon = patch.icon;
-  meta.updatedAt = Date.now();
-  await writeStore(store);
-  return meta;
+  return withStoreLock(async () => {
+    const store = await readStore();
+    const meta = store.pages.find((p) => p.id === id);
+    if (!meta) return null;
+    if (typeof patch.title === "string" && patch.title.trim()) meta.title = patch.title.trim().slice(0, 200);
+    if (typeof patch.icon === "string" && [...patch.icon].length <= 4) meta.icon = patch.icon;
+    meta.updatedAt = Date.now();
+    await writeStore(store);
+    return meta;
+  });
 }
 
 export async function movePage(
@@ -191,81 +243,91 @@ export async function movePage(
   order: number,
 ): Promise<{ error?: string }> {
   if (!isValidId(id)) return { error: "Invalid page id." };
-  const store = await readStore();
-  const meta = store.pages.find((p) => p.id === id);
-  if (!meta) return { error: "Unknown page." };
-  if (parentId !== null) {
-    if (!isValidId(parentId)) return { error: "Invalid parent id." };
-    if (parentId === id) return { error: "A page cannot contain itself." };
-    if (!store.pages.some((p) => p.id === parentId)) return { error: "Unknown parent." };
-    // Refuse cycles: the new parent must not be a descendant of the page.
-    let cursor: PageMeta | undefined = store.pages.find((p) => p.id === parentId);
-    while (cursor) {
-      if (cursor.id === id) return { error: "That would create a cycle." };
-      cursor = cursor.parentId ? store.pages.find((p) => p.id === cursor!.parentId) : undefined;
+  return withStoreLock(async () => {
+    const store = await readStore();
+    const meta = store.pages.find((p) => p.id === id);
+    if (!meta) return { error: "Unknown page." };
+    if (parentId !== null) {
+      if (!isValidId(parentId)) return { error: "Invalid parent id." };
+      if (parentId === id) return { error: "A page cannot contain itself." };
+      if (!store.pages.some((p) => p.id === parentId)) return { error: "Unknown parent." };
+      // Refuse cycles: the new parent must not be a descendant of the page.
+      let cursor: PageMeta | undefined = store.pages.find((p) => p.id === parentId);
+      while (cursor) {
+        if (cursor.id === id) return { error: "That would create a cycle." };
+        cursor = cursor.parentId ? store.pages.find((p) => p.id === cursor!.parentId) : undefined;
+      }
     }
-  }
-  meta.parentId = parentId;
-  meta.order = Number.isFinite(order) ? Math.max(0, Math.floor(order)) : 0;
-  meta.updatedAt = Date.now();
-  await writeStore(store);
-  return {};
+    meta.parentId = parentId;
+    meta.order = Number.isFinite(order) ? Math.max(0, Math.floor(order)) : 0;
+    meta.updatedAt = Date.now();
+    await writeStore(store);
+    return {};
+  });
 }
+
+function isNotFound(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "ENOENT";
+}
+
+let trashSeq = 0;
 
 export async function deletePage(id: string): Promise<{ error?: string }> {
   if (!isValidId(id)) return { error: "Invalid page id." };
-  const store = await readStore();
-  if (!store.pages.some((p) => p.id === id)) return { error: "Unknown page." };
+  return withStoreLock(async () => {
+    const store = await readStore();
+    if (!store.pages.some((p) => p.id === id)) return { error: "Unknown page." };
 
-  // Collect the whole subtree (children go to the trash with the parent —
-  // a half-orphaned tree is worse than a deleted branch).
-  const doomed = new Set<string>([id]);
-  let grew = true;
-  while (grew) {
-    grew = false;
-    for (const p of store.pages) {
-      if (p.parentId && doomed.has(p.parentId) && !doomed.has(p.id)) {
-        doomed.add(p.id);
-        grew = true;
+    // Collect the whole subtree (children go to the trash with the parent —
+    // a half-orphaned tree is worse than a deleted branch).
+    const doomed = new Set<string>([id]);
+    let grew = true;
+    while (grew) {
+      grew = false;
+      for (const p of store.pages) {
+        if (p.parentId && doomed.has(p.parentId) && !doomed.has(p.id)) {
+          doomed.add(p.id);
+          grew = true;
+        }
       }
     }
-  }
 
-  const trash = trashDir();
-  try {
-    await mkdir(trash, { recursive: true });
-    for (const d of doomed) {
-      const file = docFile(d);
-      if (!existsSync(file)) continue;
-      const trashName = `${d}-${Date.now().toString(36)}.json`;
-      try {
-        // Wrap the doc with its metadata so the trash UI can show a title
-        // and restore re-adopts the page unchanged.
-        const raw = await readFile(file, "utf8");
-        let json: unknown;
+    const trash = trashDir();
+    try {
+      await mkdir(trash, { recursive: true });
+      for (const d of doomed) {
+        const file = docFile(d);
+        // Read best-effort: a page whose doc file never landed on disk (or is
+        // unreadable) still gets a trash entry, so the page itself stays
+        // restorable instead of vanishing with the store row.
+        let json: unknown = initialDoc();
+        let hadFile = false;
         try {
+          const raw = await readFile(file, "utf8");
+          hadFile = true;
           json = JSON.parse(raw);
-        } catch {
-          json = initialDoc();
+        } catch (err) {
+          if (!isNotFound(err)) console.warn(`[FreeWord] trashing unreadable page doc ${d}`, err);
         }
+        const stamp = `${Date.now().toString(36)}-${(trashSeq++).toString(36)}${Math.random()
+          .toString(36)
+          .slice(2, 5)}`;
+        const trashName = `${d}-${stamp}.json`;
         const payload = {
           deletedAt: Date.now(),
           meta: store.pages.find((p) => p.id === d)!,
           json,
         };
         await writeFile(path.join(trash, trashName), JSON.stringify(payload), "utf8");
-        await rm(file);
-      } catch {
-        // Fallback to the plain move: the bytes stay recoverable by hand.
-        await rename(file, path.join(trash, trashName)).catch(() => undefined);
+        if (hadFile) await rm(file).catch(() => undefined);
       }
+      store.pages = store.pages.filter((p) => !doomed.has(p.id));
+      await writeStore(store);
+      return {};
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
     }
-    store.pages = store.pages.filter((p) => !doomed.has(p.id));
-    await writeStore(store);
-    return {};
-  } catch (err) {
-    return { error: err instanceof Error ? err.message : String(err) };
-  }
+  });
 }
 
 /* --- trash (restore UI for deleted pages) ----------------------------------
@@ -318,7 +380,14 @@ async function readTrashPayload(fileName: string): Promise<TrashPayload | null> 
   }
 }
 
-/** Deleted pages, newest first — unreadable files are skipped, not fatal. */
+/**
+ * Deleted pages, newest first — unreadable files are skipped, not fatal.
+ *
+ * The name-derived timestamp orders the list BEFORE the cap is taken (the
+ * old slice-in-readdir-order let the newest deletions fall off the end), and
+ * the surviving entries are read in parallel instead of one serial round
+ * after another on every sidebar refresh.
+ */
 export async function listTrash(): Promise<TrashEntry[]> {
   let names: string[];
   try {
@@ -326,50 +395,57 @@ export async function listTrash(): Promise<TrashEntry[]> {
   } catch {
     return []; // no trash yet
   }
-  const entries: TrashEntry[] = [];
-  for (const name of names.slice(0, MAX_TRASH_ENTRIES)) {
-    entries.push(toEntry(name, await readTrashPayload(name)));
-  }
+  names.sort((a, b) => deletedAtFromTrashName(b) - deletedAtFromTrashName(a));
+  const payloads = await Promise.all(names.slice(0, MAX_TRASH_ENTRIES).map(readTrashPayload));
+  const entries = payloads.map((data, i) => toEntry(names[i], data));
   return entries.sort((a, b) => b.deletedAt - a.deletedAt);
 }
 
 /** Put a trashed page back. Unknown parents re-attach to the root, not vanish. */
 export async function restoreTrash(fileName: string): Promise<{ meta?: PageMeta; error?: string }> {
+  // The regex runs on the RAW name — a `basename()` pass first would let
+  // `../evil.json` sneak past the character class (which already forbids
+  // every path separator).
   if (!SAFE_TRASH_FILE.test(fileName)) return { error: "Invalid trash entry." };
-  const full = path.join(trashDir(), fileName);
-  const data = await readTrashPayload(fileName);
-  const storedMeta = data?.meta && validMeta(data.meta) ? data.meta : null;
-  const id = storedMeta?.id ?? idFromTrashName(fileName);
-  if (!isValidId(id)) return { error: "Invalid page id." };
-  const store = await readStore();
-  if (store.pages.some((p) => p.id === id)) return { error: "A page with this id already exists." };
-  const parentId =
-    storedMeta?.parentId && store.pages.some((p) => p.id === storedMeta.parentId)
-      ? storedMeta.parentId
-      : null;
-  const siblings = store.pages.filter((p) => p.parentId === parentId);
-  const meta: PageMeta = {
-    id,
-    title: (storedMeta?.title ?? "").trim() || "Untitled",
-    icon: storedMeta?.icon || "📄",
-    parentId,
-    order: siblings.length === 0 ? 0 : Math.max(...siblings.map((s) => s.order)) + 1,
-    updatedAt: Date.now(),
-  };
-  const json =
-    data?.json && typeof data.json === "object" && (data.json as Record<string, unknown>).type === "doc"
-      ? data.json
-      : initialDoc();
-  try {
-    await mkdir(workspaceDir(), { recursive: true });
-    await writeFile(docFile(id), JSON.stringify(json), "utf8");
-    store.pages.push(meta);
-    await writeStore(store);
-    await rm(full).catch(() => undefined);
-    return { meta };
-  } catch (err) {
-    return { error: messageOf(err) };
-  }
+  return withStoreLock(async () => {
+    const full = path.join(trashDir(), fileName);
+    const data = await readTrashPayload(fileName);
+    const storedMeta = data?.meta && validMeta(data.meta) ? data.meta : null;
+    const id = storedMeta?.id ?? idFromTrashName(fileName);
+    if (!isValidId(id)) return { error: "Invalid page id." };
+    const store = await readStore();
+    if (store.pages.some((p) => p.id === id)) return { error: "A page with this id already exists." };
+    const parentId =
+      storedMeta?.parentId && store.pages.some((p) => p.id === storedMeta.parentId)
+        ? storedMeta.parentId
+        : null;
+    const siblings = store.pages.filter((p) => p.parentId === parentId);
+    const meta: PageMeta = {
+      id,
+      title: (storedMeta?.title ?? "").trim() || "Untitled",
+      icon: storedMeta?.icon || "📄",
+      parentId,
+      order: siblings.length === 0 ? 0 : Math.max(...siblings.map((s) => s.order)) + 1,
+      updatedAt: Date.now(),
+    };
+    const json =
+      data?.json && typeof data.json === "object" && (data.json as Record<string, unknown>).type === "doc"
+        ? data.json
+        : initialDoc();
+    try {
+      await ensureWorkspaceDir();
+      await writeFileAtomic(docFile(id), JSON.stringify(json));
+      store.pages.push(meta);
+      await writeStore(store);
+      // Only remove the trash file once the restore has actually landed —
+      // a failed rm would leave a ghost row whose second restore always
+      // fails with "A page with this id already exists".
+      await rm(full);
+      return { meta };
+    } catch (err) {
+      return { error: messageOf(err) };
+    }
+  });
 }
 
 /** Erase one trash entry for good. */

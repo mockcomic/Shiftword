@@ -3,7 +3,7 @@ import type { FwApi, PageMeta, PageSettings, TrashEntry, WriteFileResult } from 
 import { PAGE_SIZES } from "../../shared/types";
 import type { PageSize } from "../../shared/types";
 import { createEditor, INITIAL_DOC, syncDocAttrStyles } from "./editor/create-editor";
-import { runPagination, schedulePaginate } from "./editor/pagination";
+import { invalidateMeasureCache, runPagination, schedulePaginate } from "./editor/pagination";
 import { createToolbar, syncToolbar } from "./features/toolbar";
 import { insertImageAtCursor } from "./features/image-insert";
 import { updateStatus, scheduleStatus } from "./features/statusbar";
@@ -26,6 +26,18 @@ import {
 import { createSidebar } from "./features/sidebar";
 import type { Sidebar } from "./features/sidebar";
 import { openQuickSwitcher } from "./features/quick-switcher";
+import { closeFindPanel, handleFindCommand } from "./features/find-replace";
+import { openHeaderFooterModal } from "./features/header-footer";
+import { insertFootnoteAtCursor } from "./editor/footnotes";
+import { refreshCommentsPanel, toggleCommentsPanel } from "./features/comments-panel";
+import {
+  acceptAllChanges,
+  acceptChangeAtCursor,
+  isTrackingEnabled,
+  rejectAllChanges,
+  rejectChangeAtCursor,
+  setTracking,
+} from "./editor/review";
 
 declare global {
   interface Window {
@@ -82,20 +94,40 @@ async function flushPageSave(): Promise<boolean> {
     window.clearTimeout(pageSaveTimer);
     pageSaveTimer = null;
   }
-  if (currentPageId === null || !editor || !fw || !pageUnsaved) return true;
-  const ok = await fw
-    .writePage(currentPageId, docJson(editor))
-    .then((res) => !res || !res.error)
-    .catch(() => false);
-  if (ok) {
-    pageUnsaved = false;
-    markClean();
-  } else {
-    // Keep the document dirty so the quit prompt still protects the user.
-    console.error("[FreeWord] page autosave failed");
-  }
-  return ok;
+  // Serialize behind the flush already in flight (blur, quit, and a page
+  // switch can all call this at once). Two concurrent writePage calls may
+  // complete out of order — the older snapshot could then overwrite the
+  // newer one on disk, losing the last edits.
+  const run = pageSaveInflight.then(async () => {
+    if (currentPageId === null || !editor || !fw || !pageUnsaved) return true;
+    const id = currentPageId;
+    const snapshot = docJson(editor);
+    // ProseMirror nodes are immutable: if the live doc is still THIS node
+    // after the write landed, no transaction (typing, comments, page setup)
+    // touched it in flight and the disk copy is current.
+    const docAtSnapshot = editor.state.doc;
+    const ok = await fw
+      .writePage(id, snapshot)
+      .then((res) => !res || !res.error)
+      .catch(() => false);
+    if (ok) {
+      // Only clear the flag when nothing was typed while this write was in
+      // flight (the id check guards a page switch mid-write as well).
+      if (currentPageId === id && editor && editor.state.doc === docAtSnapshot) {
+        pageUnsaved = false;
+        markClean();
+      }
+    } else {
+      // Keep the document dirty so the quit prompt still protects the user.
+      console.error("[FreeWord] page autosave failed");
+    }
+    return ok;
+  });
+  pageSaveInflight = run.catch(() => false);
+  return run;
 }
+
+let pageSaveInflight: Promise<boolean> = Promise.resolve(true);
 
 function isPageSource(): boolean {
   return currentPageId !== null;
@@ -128,30 +160,44 @@ async function confirmSwitch(action: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * One destructive document switch at a time. While a switch is awaiting a
+ * modal or an IPC read, sidebar clicks and menu commands must not start a
+ * second one — interleaved switches used to land the first page's title on
+ * the second page's content (or run both `setContent` calls in either order).
+ */
+let switchBusy = false;
+
 async function openPage(id: string): Promise<void> {
   if (!editor || !fw) return;
   if (currentPageId === id) return;
-  if (!(await confirmSwitch("opening another page"))) return;
-  const page = await fw.readPage(id).catch(() => null);
-  if (!page) {
-    await alertDialog(`Could not open the page "${id}" — it may have been deleted.`);
-    void reloadPages();
-    return;
+  if (switchBusy) return;
+  switchBusy = true;
+  try {
+    if (!(await confirmSwitch("opening another page"))) return;
+    const page = await fw.readPage(id).catch(() => null);
+    if (!page) {
+      await alertDialog(`Could not open the page "${id}" — it may have been deleted.`);
+      void reloadPages();
+      return;
+    }
+    editor.commands.setContent(page.json as unknown as JSONContent, { emitUpdate: false });
+    currentPageId = id;
+    currentPath = null;
+    docName = page.meta.title || "Untitled";
+    pageUnsaved = false;
+    markClean();
+    syncDocAttrStyles(editor);
+    runPagination(editor);
+    editor.commands.focus("start");
+    updateStatus(editor);
+    syncToolbar(editor);
+    // Refresh the sidebar first so the active highlight survives the re-render.
+    await reloadPages();
+    sidebar?.setActive(id);
+  } finally {
+    switchBusy = false;
   }
-  editor.commands.setContent(page.json as unknown as JSONContent, { emitUpdate: false });
-  currentPageId = id;
-  currentPath = null;
-  docName = page.meta.title || "Untitled";
-  pageUnsaved = false;
-  markClean();
-  syncDocAttrStyles(editor);
-  runPagination(editor);
-  editor.commands.focus("start");
-  updateStatus(editor);
-  syncToolbar(editor);
-  // Refresh the sidebar first so the active highlight survives the re-render.
-  await reloadPages();
-  sidebar?.setActive(id);
 }
 
 async function createAndOpenPage(parentId: string | null): Promise<void> {
@@ -309,6 +355,7 @@ function onEditorUpdate(): void {
   if (editor) {
     schedulePaginate(editor);
     scheduleStatus(editor);
+    refreshCommentsPanel(editor);
     if (currentPageId !== null) {
       pageUnsaved = true;
       schedulePageSave();
@@ -330,6 +377,7 @@ function nextFrame(): Promise<void> {
 function setPrintMode(on: boolean): void {
   if (printMode === on) return;
   printMode = on;
+  if (on) closeFindPanel(); // no find panel — or its highlights — in the PDF
   document.body.classList.toggle("print-mode", on);
   // The print engine always gets the Word rendering: real fixed pages and a
   // settled pagination, even mid-session in Notion mode.
@@ -350,7 +398,8 @@ function setPrintMode(on: boolean): void {
   const ps = PAGE_SIZES[(attrs.size ?? "a4") as PageSize] ?? PAGE_SIZES.a4;
   styleEl.textContent = [
     `@page { size: ${ps.w}mm ${ps.h}mm; margin: 0; }`,
-    "#toolbar, #statusbar, #sidebar { display: none !important; }",
+    "#toolbar, #statusbar, #sidebar, #fw-find-panel, #fw-comments { display: none !important; }",
+    ".fw-match, .fw-match-active { background: transparent !important; outline: none !important; }",
     "#canvas { background: white !important; padding: 0 !important; }",
     ".fw-doc { zoom: 1 !important; }",
     ".fw-page { margin: 0 !important; box-shadow: none !important; break-after: page; page-break-after: always; }",
@@ -409,56 +458,66 @@ function openPageSetupModal(): void {
 }
 
 async function newDoc(): Promise<void> {
-  if (!editor) return;
-  if (!(await confirmSwitch("starting a new document"))) return;
-  editor.commands.setContent(INITIAL_DOC, { emitUpdate: false });
-  currentPath = null;
-  currentPageId = null;
-  pageUnsaved = false;
-  sidebar?.setActive(null);
-  docName = "Untitled";
-  markClean();
-  syncDocAttrStyles(editor);
-  runPagination(editor);
-  // Open at the top, the way Word does: setContent leaves the caret wherever
-  // the mapping puts it, and a re-pagination below maps it by page — which can
-  // otherwise land it on the last page of a freshly created document.
-  editor.commands.focus("start");
-  updateStatus(editor);
-  syncToolbar(editor);
+  if (!editor || switchBusy) return;
+  switchBusy = true;
+  try {
+    if (!(await confirmSwitch("starting a new document"))) return;
+    editor.commands.setContent(INITIAL_DOC, { emitUpdate: false });
+    currentPath = null;
+    currentPageId = null;
+    pageUnsaved = false;
+    sidebar?.setActive(null);
+    docName = "Untitled";
+    markClean();
+    syncDocAttrStyles(editor);
+    runPagination(editor);
+    // Open at the top, the way Word does: setContent leaves the caret wherever
+    // the mapping puts it, and a re-pagination below maps it by page — which can
+    // otherwise land it on the last page of a freshly created document.
+    editor.commands.focus("start");
+    updateStatus(editor);
+    syncToolbar(editor);
+  } finally {
+    switchBusy = false;
+  }
 }
 
 async function openFile(path?: string): Promise<void> {
-  if (!editor || !fw) return;
-  if (!(await confirmSwitch("opening another document"))) return;
-  const res = await fw.openFile(path);
-  if (!res) return;
+  if (!editor || !fw || switchBusy) return;
+  switchBusy = true;
   try {
-    const json =
-      res.ext === "docx"
-        ? await docxBufferToDoc(res.buffer, editor.state.schema)
-        : res.ext === "txt"
-          ? textToDoc(new TextDecoder().decode(res.buffer))
-          : htmlToDoc(new TextDecoder().decode(res.buffer), editor.state.schema);
-    editor.commands.setContent(json as unknown as JSONContent, { emitUpdate: false });
-  } catch (err) {
-    // An unreadable file must be visible without blocking the renderer the way
-    // `window.alert` does (that call freezes the whole page, quit handshake included).
-    void alertDialog(`Could not open "${res.name}": ${err instanceof Error ? err.message : String(err)}`);
-    return;
+    if (!(await confirmSwitch("opening another document"))) return;
+    const res = await fw.openFile(path);
+    if (!res) return;
+    try {
+      const json =
+        res.ext === "docx"
+          ? await docxBufferToDoc(res.buffer, editor.state.schema)
+          : res.ext === "txt"
+            ? textToDoc(new TextDecoder().decode(res.buffer))
+            : htmlToDoc(new TextDecoder().decode(res.buffer), editor.state.schema);
+      editor.commands.setContent(json as unknown as JSONContent, { emitUpdate: false });
+    } catch (err) {
+      // An unreadable file must be visible without blocking the renderer the way
+      // `window.alert` does (that call freezes the whole page, quit handshake included).
+      void alertDialog(`Could not open "${res.name}": ${err instanceof Error ? err.message : String(err)}`);
+      return;
+    }
+    currentPath = res.path;
+    currentPageId = null;
+    pageUnsaved = false;
+    sidebar?.setActive(null);
+    docName = res.name.replace(/\.(docx|txt|html|htm)$/i, "");
+    markClean();
+    syncDocAttrStyles(editor);
+    runPagination(editor);
+    // See newDoc: the caret belongs at the top of a document the user just opened.
+    editor.commands.focus("start");
+    updateStatus(editor);
+    syncToolbar(editor);
+  } finally {
+    switchBusy = false;
   }
-  currentPath = res.path;
-  currentPageId = null;
-  pageUnsaved = false;
-  sidebar?.setActive(null);
-  docName = res.name.replace(/\.(docx|txt|html|htm)$/i, "");
-  markClean();
-  syncDocAttrStyles(editor);
-  runPagination(editor);
-  // See newDoc: the caret belongs at the top of a document the user just opened.
-  editor.commands.focus("start");
-  updateStatus(editor);
-  syncToolbar(editor);
 }
 
 type SaveOutcome = "saved" | "cancelled" | "failed";
@@ -574,6 +633,25 @@ async function printDoc(): Promise<void> {
   }
 }
 
+/**
+ * Edit → Author Name…: the name stamped on comments and tracked changes.
+ * Defaults to the OS user name in the main process; this is the override.
+ */
+async function changeAuthorName(): Promise<void> {
+  if (!fw) return;
+  const settings = await fw.getSettings().catch(() => null);
+  if (!settings) return;
+  const name = await promptModal({
+    title: "Author name",
+    label: "Used for comments and tracked changes",
+    value: settings.authorName ?? "",
+    okLabel: "Save",
+    validate: (v) => (v.trim() ? null : "The name cannot be empty."),
+  });
+  if (name === null || !name.trim()) return;
+  await fw.setSettings({ authorName: name.trim() });
+}
+
 export function initApp(): void {
   editor = createEditor(onEditorUpdate);
   createToolbar(editor);
@@ -620,6 +698,7 @@ export function initApp(): void {
     // Ctrl/Cmd+K — Notion's quick switcher. The link command lost the tooltip
     // claim on this chord; nothing else binds it.
     document.addEventListener("keydown", (e) => {
+      if (e.isComposing || e.keyCode === 229) return; // IME owns the chord mid-composition
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") {
         e.preventDefault();
         openQuickSwitch();
@@ -629,7 +708,12 @@ export function initApp(): void {
 
   document.addEventListener("fw:page-setup-request", openPageSetupModal);
   document.fonts.ready.then(() => {
-    if (editor) runPagination(editor);
+    // Deferred web fonts change every measured text height — the cache from
+    // the fallback-metric era must not survive this point.
+    if (editor) {
+      invalidateMeasureCache();
+      runPagination(editor);
+    }
   });
 
   // Keep the toolbar/status bar fresh when zoom changes.
@@ -681,6 +765,39 @@ export function initApp(): void {
         break;
       case "file:print":
         void printDoc();
+        break;
+      case "edit:find":
+      case "edit:replace":
+      case "edit:findNext":
+      case "edit:findPrev":
+        if (ed) handleFindCommand(ed, id);
+        break;
+      case "edit:authorName":
+        void changeAuthorName();
+        break;
+      case "insert:headerFooter":
+        if (ed) openHeaderFooterModal(ed);
+        break;
+      case "insert:footnote":
+        if (ed) void insertFootnoteAtCursor(ed);
+        break;
+      case "view:comments":
+        if (ed) toggleCommentsPanel(ed);
+        break;
+      case "review:toggleTrack":
+        if (ed) setTracking(ed, !isTrackingEnabled(ed));
+        break;
+      case "review:acceptAll":
+        if (ed) acceptAllChanges(ed);
+        break;
+      case "review:rejectAll":
+        if (ed) rejectAllChanges(ed);
+        break;
+      case "review:acceptAt":
+        if (ed) acceptChangeAtCursor(ed);
+        break;
+      case "review:rejectAt":
+        if (ed) rejectChangeAtCursor(ed);
         break;
       case "insert:pageBreak":
         insertPageBreak();

@@ -1,5 +1,6 @@
 import type { PageMeta } from "../../../shared/types";
 import { filterPages } from "./sidebar";
+import { escapeHtml } from "./modal";
 
 /**
  * Ctrl+K quick switcher: a centered search box over the page list, Notion's
@@ -32,11 +33,13 @@ export function openQuickSwitcher(pages: PageMeta[], onPick: (id: string) => voi
       list.innerHTML = `<div class="quick-empty">No matching pages</div>`;
       return;
     }
+    // Titles come from user-created page names — they must not steer markup.
     list.innerHTML = current
       .map(
         (p, i) =>
-          `<button type="button" class="quick-item${i === active ? " active" : ""}" data-id="${p.id}">` +
-          `<span class="side-icon">${p.icon || "📄"}</span><span class="quick-title">${p.title}</span></button>`,
+          `<button type="button" class="quick-item${i === active ? " active" : ""}" data-id="${escapeHtml(p.id)}">` +
+          `<span class="side-icon">${escapeHtml(p.icon || "📄")}</span>` +
+          `<span class="quick-title">${escapeHtml(p.title)}</span></button>`,
       )
       .join("");
     list.querySelectorAll<HTMLButtonElement>(".quick-item").forEach((btn) => {
@@ -61,6 +64,9 @@ export function openQuickSwitcher(pages: PageMeta[], onPick: (id: string) => voi
   };
 
   const onKey = (e: KeyboardEvent): void => {
+    // While an IME composition is open, Enter commits candidates and Escape
+    // cancels the composition — neither may pick or close the switcher.
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();

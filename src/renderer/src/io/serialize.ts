@@ -1,5 +1,6 @@
 import type { Editor } from "@tiptap/core";
 import { getHTMLFromFragment } from "@tiptap/core";
+import type { Node as PMNode } from "@tiptap/pm/model";
 import {
   FONT_STACK_BODY,
   FONT_STACK_CODE,
@@ -15,10 +16,55 @@ export function docJson(editor: Editor): Record<string, unknown> {
   return JSON.parse(JSON.stringify(editor.getJSON()));
 }
 
-/** Plain text with one line per paragraph block. */
+/**
+ * Plain text with one line per paragraph block.
+ *
+ * Not `doc.textBetween` anymore: the "final" view must drop text the user
+ * deleted *without accepting the revision* (Word exports the same view),
+ * and the footnote refs stay silent — a txt file has no page foot to put
+ * the notes in, and the bracketed number would only be noise.
+ */
+function inlineText(node: PMNode): string {
+  let out = "";
+  node.forEach((child) => {
+    if (child.isText) {
+      if (!child.marks.some((m) => m.type.name === "trackedDelete")) out += String(child.text ?? "");
+      return;
+    }
+    if (child.type.name === "hardBreak") {
+      out += "\n";
+      return;
+    }
+    if (child.type.name === "footnoteRef") return; // the number is layout, not text
+    out += " "; // other atoms keep the old leafText behaviour
+  });
+  return out;
+}
+
+function collectLines(node: PMNode, out: string[]): void {
+  if (node.isTextblock) {
+    out.push(inlineText(node));
+    return;
+  }
+  if (node.type.name === "table") {
+    node.forEach((row) => {
+      const cells: string[] = [];
+      row.forEach((cell) => {
+        const inner: string[] = [];
+        collectLines(cell, inner);
+        cells.push(inner.join(" "));
+      });
+      out.push(cells.join("\t"));
+    });
+    return;
+  }
+  node.forEach((child) => collectLines(child, out));
+}
+
 export function toText(editor: Editor): string {
-  const doc = editor.state.doc;
-  return doc.textBetween(0, doc.content.size, "\n", " ");
+  const out: string[] = [];
+  editor.state.doc.forEach((page) => collectLines(page, out));
+  return out.join("\n");
 }
 
 /**
@@ -49,6 +95,13 @@ const HTML_STYLES = [
   ".fw-callout-body p{margin:0 0 4pt}",
   "hr.fw-divider{border:none;border-top:1px solid #e0e0e0;margin:10pt 0}",
   "pre.fw-codeblock{font-family:Consolas,'Courier New',monospace;font-size:0.95em;background:#f2f2f2;border-radius:4px;padding:6pt 8pt;white-space:pre-wrap;margin:0 0 6pt}",
+  // Review marks keep their meaning in a plain HTML export: insertions stay
+  // underlined, rejected-pending deletions stay struck through (shown, like
+  // Word's "All Markup" view — the HTML export never hides content).
+  ".fw-ins{color:#1a6b1a;text-decoration:underline}",
+  ".fw-del{color:#b00020;text-decoration:line-through}",
+  ".fw-comment{background:rgba(255,235,59,.35)}",
+  ".fw-fn-ref{font-size:.75em;vertical-align:super;color:#444}",
 ].join("\n");
 
 export function toHtml(editor: Editor): string {

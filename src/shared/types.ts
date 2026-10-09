@@ -102,6 +102,11 @@ export interface AppSettings {
   sidebarOpen: boolean;
   /** Ribbon toolbar visibility inside Notion mode (hidden unless pinned). */
   toolbarPinned: boolean;
+  /**
+   * Name stamped on comments and tracked changes. The main process defaults
+   * it to the OS user name; the Edit menu offers an override.
+   */
+  authorName: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -109,7 +114,24 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: "light",
   sidebarOpen: false,
   toolbarPinned: false,
+  authorName: "You",
 };
+
+/**
+ * One comment thread (v1 is single-message per thread). Stored under the
+ * `comments` attr of the `doc` node keyed by id; the `comment` mark on text
+ * references that id. Keeping the store in the document JSON means
+ * workspace-page autosave, `.docx` save and the quit handshake cover
+ * comments with no extra plumbing.
+ */
+export interface CommentRecord {
+  author: string;
+  text: string;
+  createdAt: number;
+  resolved: boolean;
+}
+
+export type CommentStore = Record<string, CommentRecord>;
 
 /**
  * Workspace pages (the Notion-style page tree, stored locally under

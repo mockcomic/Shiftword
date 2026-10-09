@@ -48,7 +48,22 @@ export function openPageSetup(current: PageSettings, onApply: (settings: PageSet
 
   const close = (): void => {
     overlay.remove();
+    document.removeEventListener("keydown", onKey, true);
   };
+  const onKey = (e: KeyboardEvent): void => {
+    if (e.isComposing || e.keyCode === 229) return;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    } else if (e.key === "Enter") {
+      // Enter confirms from any field, matching the modal.ts dialogs.
+      e.preventDefault();
+      e.stopPropagation();
+      okBtn.click();
+    }
+  };
+  document.addEventListener("keydown", onKey, true);
 
   const sel = overlay.querySelector<HTMLSelectElement>("#fw-ps-size");
   const inputs = {
@@ -67,8 +82,9 @@ export function openPageSetup(current: PageSettings, onApply: (settings: PageSet
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) close();
   });
+  const okBtn = overlay.querySelector("#fw-ps-ok") as HTMLButtonElement;
   (overlay.querySelector("#fw-ps-cancel") as HTMLButtonElement).addEventListener("click", close);
-  (overlay.querySelector("#fw-ps-ok") as HTMLButtonElement).addEventListener("click", () => {
+  okBtn.addEventListener("click", () => {
     const settings: PageSettings = {
       size: (sel?.value ?? "a4") as PageSize,
       mt: clampMm(parseFloat(inputs.mt?.value ?? "")),

@@ -1,6 +1,9 @@
 import { app, BrowserWindow, dialog, ipcMain, session } from "electron";
-import { join } from "node:path";
+import { stat } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { registerIpc } from "./ipc";
+import { upsertRecent } from "./recent";
 import { buildContextMenu, configureMenu, rebuildMenu } from "./menu";
 
 let mainWindow: BrowserWindow | null = null;
@@ -87,7 +90,26 @@ function requestQuit(): void {
 async function handleQuitResponse(
   payload: { dirty: boolean; name?: string } | null | undefined,
 ): Promise<void> {
-  if (!awaitingResponse) return;
+  if (!awaitingResponse || handlingQuitResponse) return;
+  handlingQuitResponse = true;
+  try {
+    await handleQuitResponseInner(payload);
+  } catch (err) {
+    // A rejecting dialog (window destroyed mid-dialog) used to escape as an
+    // unhandled rejection with `awaitingResponse` stuck true — after that the
+    // app could never be quit again from the close button or the menu.
+    console.error("[FreeWord] quit handshake failed:", err);
+    awaitingResponse = false;
+    pendingSaveQuit = false;
+    clearQuitTimer();
+  } finally {
+    handlingQuitResponse = false;
+  }
+}
+
+async function handleQuitResponseInner(
+  payload: { dirty: boolean; name?: string } | null | undefined,
+): Promise<void> {
   clearQuitTimer();
 
   // Phase 2: response to `app:save-then-quit`.
@@ -121,9 +143,14 @@ async function handleQuitResponse(
   });
   if (response === 0) {
     // Save → tell the renderer to save, then respond again.
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+      awaitingResponse = false;
+      return;
+    }
     pendingSaveQuit = true;
-    win.webContents.send("app:save-then-quit");
-    // The user may take a while in the Save As dialog: be patient.
+    mainWindow.webContents.send("app:save-then-quit");
+    // The user may take a while in the Save As dialog: be patient, but not
+    // forever — an ack timeout returns the app to a state where quit works.
     quitTimer = setTimeout(() => {
       if (awaitingResponse && pendingSaveQuit) {
         awaitingResponse = false;
@@ -138,6 +165,8 @@ async function handleQuitResponse(
     // Cancel → stay alive.
   }
 }
+
+let handlingQuitResponse = false;
 
 ipcMain.on("app:quit-response", (_event, payload: { dirty: boolean; name?: string }) => {
   void handleQuitResponse(payload);
@@ -189,10 +218,16 @@ function blockHostileContents(): void {
     contents.on("will-navigate", (event, url) => {
       // Content is loaded exactly once (dev server or bundled file). A
       // navigation away from that URL would replace the editor with a page.
-      const same = appUrl === null ? url.startsWith("file:") : isSameOrigin(appUrl, url);
-      if (!same) {
+      if (!isAllowedNavigation(url)) {
         event.preventDefault();
         console.warn(`[FreeWord] blocked navigation to ${url}`);
+      }
+    });
+    // Nested frames navigate on their own channel; guard it the same way.
+    contents.on("will-frame-navigate", (event) => {
+      if (!isAllowedNavigation(event.url)) {
+        event.preventDefault();
+        console.warn(`[FreeWord] blocked frame navigation to ${event.url}`);
       }
     });
 
@@ -206,14 +241,37 @@ function blockHostileContents(): void {
     console.warn(`[FreeWord] denied permission request: ${permission}`);
     callback(false);
   });
+  // The *check* channel is separate from the *request* one — without this,
+  // synchronous checks (alert(), clipboard-read, …) still fall through to
+  // Electron's allow-by-default answer.
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
+    console.warn(`[FreeWord] denied permission check: ${permission}`);
+    return false;
+  });
 }
 
-function isSameOrigin(base: string, url: string): boolean {
+/**
+ * Is this navigation staying on the app's own document?
+ *
+ * `file:` URLs have *opaque* origins — `new URL(a).origin === "null"` for
+ * every one of them — so an origin comparison would let ANY local file pass
+ * as "same origin". For the packaged app the only allowed target is the
+ * exact index.html the app itself loaded.
+ */
+function isAllowedNavigation(url: string): boolean {
+  if (appUrl === null) return url.startsWith("file:");
   try {
-    return new URL(base).origin === new URL(url).origin;
+    return isSameOrigin(appUrl, url);
   } catch {
     return false;
   }
+}
+
+function isSameOrigin(base: string, url: string): boolean {
+  const a = new URL(base);
+  const b = new URL(url);
+  if (a.protocol === "file:" || b.protocol === "file:") return a.href === b.href;
+  return a.origin === b.origin;
 }
 
 function createWindow(): void {
@@ -279,8 +337,12 @@ function createWindow(): void {
     appUrl = process.env.ELECTRON_RENDERER_URL;
     void mainWindow.loadURL(appUrl);
   } else {
-    appUrl = `file://${join(__dirname, "../renderer/index.html")}`;
-    void mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+    const htmlPath = join(__dirname, "../renderer/index.html");
+    // `file://${join(…)}` produces `file://C:\Users\…` on Windows — a
+    // drive-name-as-authority URL that URL parsing treats as an empty
+    // authority, so it never compared equal to real file URLs.
+    appUrl = pathToFileURL(htmlPath).href;
+    void mainWindow.loadFile(htmlPath);
   }
 }
 
@@ -294,10 +356,28 @@ if (!app.requestSingleInstanceLock()) {
   );
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+  app.on("second-instance", (_event, argv) => {
+    const win = mainWindow;
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.focus();
+    // Route the file the user double-clicked (or opened from a second
+    // launch) to the running instance instead of dropping argv on the floor.
+    const filePath = argv
+      .slice(1)
+      .find((a) => /\.(docx|txt|html|htm)$/i.test(a));
+    if (!filePath) return;
+    void (async () => {
+      try {
+        const st = await stat(filePath);
+        await upsertRecent({ path: filePath, name: basename(filePath), mtimeMs: st.mtimeMs });
+      } catch {
+        return; // not a readable file — keep it out of the recent store
+      }
+      if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+        win.webContents.send("menu:command", { id: "recent:open", path: filePath });
+      }
+    })();
   });
 
   void app.whenReady().then(() => {

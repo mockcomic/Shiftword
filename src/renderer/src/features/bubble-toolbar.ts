@@ -3,6 +3,7 @@ import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { EditorView } from "@tiptap/pm/view";
 import { CellSelection } from "@tiptap/pm/tables";
 import { promptLink } from "./link-prompt";
+import { addCommentToSelection } from "../editor/comments";
 
 /**
  * Floating selection toolbar — the Notion affordance: select text and a small
@@ -24,11 +25,20 @@ export const BubbleToolbar = Extension.create({
     const editor = this.editor;
 
     let popup: HTMLElement | null = null;
+    /**
+     * Signature of the last rendered (selection range + mark states). The
+     * plugin `update` fires for EVERY transaction (pagination, decorations,
+     * history meta…), and the old rebuild paid a full innerHTML rewrite,
+     * 16 listener re-attachments and two forced `coordsAtPos` layouts each
+     * time. Same signature → same DOM, zero layout reads.
+     */
+    let lastSignature = "";
 
     const close = (): void => {
       if (popup) {
         popup.remove();
         popup = null;
+        lastSignature = "";
       }
     };
 
@@ -107,6 +117,16 @@ export const BubbleToolbar = Extension.create({
         active: () => editor.isActive("highlight", { color: HIGHLIGHT_YELLOW }),
         run: () => editor.chain().toggleHighlight({ color: HIGHLIGHT_YELLOW }).run(),
       },
+      {
+        id: "comment",
+        label: "💬",
+        title: "Add comment",
+        active: () => false,
+        run: () => {
+          // The comment prompt captures the selection itself before opening.
+          void addCommentToSelection(editor);
+        },
+      },
     ];
 
     const render = (view: EditorView): void => {
@@ -114,12 +134,16 @@ export const BubbleToolbar = Extension.create({
         close();
         return;
       }
+      const defs = commands();
+      const { selection } = view.state;
+      const signature = `${selection.from}:${selection.to}:${defs.map((d) => (d.active() ? "1" : "0")).join("")}`;
+      if (popup && signature === lastSignature) return; // nothing moved, nothing toggled
+      lastSignature = signature;
       if (!popup) {
         popup = document.createElement("div");
         popup.className = "bubble-menu";
         document.body.appendChild(popup);
       }
-      const defs = commands();
       popup.innerHTML = defs
         .map(
           (def) =>
@@ -136,11 +160,12 @@ export const BubbleToolbar = Extension.create({
           const def = defs.find((d) => d.id === btn.dataset.id);
           if (!def) return;
           def.run();
-          if (def.id !== "link") {
+          // Link and comment open prompts that take focus themselves; the
+          // popup must not close or re-render under the modal.
+          if (def.id !== "link" && def.id !== "comment") {
             view.focus();
             // Re-render so the active states reflect the command just run.
-            popup?.remove();
-            popup = null;
+            close();
             render(view);
           }
         });

@@ -34,8 +34,9 @@ export function updateStatus(editor: Editor): void {
   // hides it): the `--smoke-test` probe greps for `Page X / Y`, and it must
   // keep passing whichever mode the user last persisted.
   const notion = document.body.classList.contains("notion-mode");
+  const tracking = doc.attrs?.trackChanges === true;
   el.innerHTML =
     `<span class="sb-left sb-page">Page ${currentPage} / ${pageCount}</span>` +
     `<span class="sb-center">${words} words</span>` +
-    `<span class="sb-right">${notion ? "Notion" : "DOCX"} · ${getZoom()}%</span>`;
+    `<span class="sb-right">${tracking ? '<span class="sb-track" title="Track changes is on">● Tracking</span> ' : ""}${notion ? "Notion" : "DOCX"} · ${getZoom()}%</span>`;
 }

@@ -735,3 +735,81 @@ describe("PDF and print failure reporting", () => {
     expect(document.body.classList.contains("print-mode")).toBe(false);
   });
 });
+
+describe("feature-complete menu commands", () => {
+  it("edit:find opens the panel and edit commands navigate it", async () => {
+    await boot();
+    await send("edit:find");
+    expect(document.querySelector("#fw-find-panel")).toBeTruthy();
+    await send("edit:findNext"); // empty doc: must not throw
+    await send("edit:findPrev");
+    await send("file:print").catch(() => undefined);
+  });
+
+  it("edit:replace reveals the replace row", async () => {
+    await boot();
+    await send("edit:replace");
+    const panel = document.querySelector("#fw-find-panel");
+    expect(panel).toBeTruthy();
+    expect(panel!.classList.contains("with-replace")).toBe(true);
+  });
+
+  it("insert:headerFooter applies the bands to the document", async () => {
+    await boot();
+    await send("insert:headerFooter");
+    expect(document.querySelector("#fw-header-footer")).toBeTruthy();
+    (document.querySelector("#fhf-header") as HTMLTextAreaElement).value = "Draft";
+    (document.querySelector("#fhf-footer") as HTMLTextAreaElement).value = "Page {{page}}";
+    document.querySelector("#fhf-ok")!.click();
+    expect(editorEl().querySelector(".fw-page-header")?.textContent).toBe("Draft");
+    expect(editorEl().querySelector(".fw-page-footer")?.textContent).toBe("Page 1");
+    expect(document.title).toMatch(/^● /); // bands are a document change
+  });
+
+  it("insert:footnote opens the note prompt and lands the marker", async () => {
+    await boot();
+    await send("insert:footnote");
+    const box = document.querySelector<HTMLElement>("#fw-prompt");
+    expect(box).toBeTruthy();
+    (box!.querySelector("#fw-prompt-input") as HTMLTextAreaElement).value = "a note";
+    box!.querySelector("#fw-prompt-ok")!.click();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(editorEl().querySelector("sup.fw-fn-ref")).toBeTruthy();
+  });
+
+  it("abandoning the footnote prompt leaves no empty marker behind", async () => {
+    await boot();
+    await send("insert:footnote");
+    const box = document.querySelector<HTMLElement>("#fw-prompt");
+    expect(box).toBeTruthy();
+    box!.querySelector("#fw-prompt-cancel")!.click();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(editorEl().querySelector("sup.fw-fn-ref")).toBeNull();
+  });
+
+  it("review:toggleTrack flips the status-bar badge", async () => {
+    await boot();
+    expect(document.querySelector("#statusbar")!.textContent).not.toContain("Tracking");
+    await send("review:toggleTrack");
+    expect(document.querySelector("#statusbar")!.textContent).toContain("Tracking");
+    await send("review:toggleTrack");
+    expect(document.querySelector("#statusbar")!.textContent).not.toContain("Tracking");
+  });
+
+  it("review accept/reject commands run clean on an untracked document", async () => {
+    await boot();
+    await send("review:acceptAll");
+    await send("review:rejectAll");
+    await send("review:acceptAt");
+    await send("review:rejectAt");
+    expect(alertDialogText()).toBeNull();
+  });
+
+  it("view:comments toggles the rail", async () => {
+    await boot();
+    await send("view:comments");
+    expect(document.querySelector("#fw-comments")).toBeTruthy();
+    await send("view:comments");
+    expect(document.querySelector("#fw-comments")).toBeNull();
+  });
+});

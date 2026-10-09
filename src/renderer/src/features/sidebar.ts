@@ -345,9 +345,13 @@ export function createSidebar(handlers: SidebarHandlers): Sidebar {
       pages = newPages.slice();
       if (newTrash) trash = newTrash.slice();
       // Expand anything that has a parent chain so a fresh workspace reads as
-      // a list, not a puzzle.
-      for (const p of pages)
-        if (hasChildren(p.id) && expanded.size === 0 && p.parentId === null) expanded.add(p.id);
+      // a list, not a puzzle. Computed BEFORE the loop: testing
+      // `expanded.size === 0` inside it stopped after the first expansion —
+      // every other root stayed collapsed on an empty sidebar.
+      const wasEmpty = expanded.size === 0;
+      if (wasEmpty) {
+        for (const p of pages) if (hasChildren(p.id) && p.parentId === null) expanded.add(p.id);
+      }
       rerender();
       renderTrash();
     },

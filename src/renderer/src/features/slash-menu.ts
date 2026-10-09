@@ -180,6 +180,9 @@ export const SlashMenu = Extension.create({
         props: {
           handleKeyDown: (view, event) => {
             if (!open) return false;
+            // During an IME composition, Enter commits the candidate list and
+            // Escape cancels it — the menu must not hijack either.
+            if (event.isComposing || event.keyCode === 229) return false;
             switch (event.key) {
               case "Escape":
                 close();

@@ -226,9 +226,25 @@ describe("docx:save", () => {
     const dir = await mkdtemp(join(tmpdir(), "fw-save-"));
     const p = join(dir, "quiet.docx");
     const json = { type: "doc", content: [{ type: "page", content: [{ type: "paragraph" }] }] };
+    // First save goes through the dialog — that is how the path becomes one
+    // main "knows" and the renderer is later allowed to name directly.
+    dialogMock.showSaveDialog.mockResolvedValue({ canceled: false, filePath: p });
+    const first = (await call("docx:save", { json, defaultName: "quiet.docx" })) as { path: string };
+    expect(first.path).toBe(p);
+    dialogMock.showSaveDialog.mockClear();
     const res = (await call("docx:save", { json, defaultName: "quiet.docx", path: p })) as { path: string };
     expect(res.path).toBe(p);
     expect(dialogMock.showSaveDialog).not.toHaveBeenCalled();
+  });
+
+  it("refuses a renderer-invented path that never came from a dialog", async () => {
+    const json = { type: "doc", content: [{ type: "page", content: [{ type: "paragraph" }] }] };
+    const res = (await call("docx:save", {
+      json,
+      defaultName: "evil.docx",
+      path: join(tmpdir(), "fw-invented-42", "startup.docx"),
+    })) as { error?: string };
+    expect(res.error).toMatch(/Unrecognized save path/);
   });
 });
 

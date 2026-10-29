@@ -12,11 +12,11 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            script: dist:linux
+            target: linux
           - os: windows-latest
-            script: dist:win
+            target: win
           - os: macos-latest
-            script: dist:mac
+            target: mac
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -34,9 +34,8 @@ jobs:
         # run-electron-safe wrapper only exists for the Chromium sandbox
         # quirk on the author's Linux box; CI packaging does not launch
         # the app).
-        run: |
-          npx electron-vite build
-          npx electron-builder --${{ matrix.script == 'dist:linux' && 'linux' || (matrix.script == 'dist:win' && 'win' || 'mac') }}
+        run: npx electron-vite build && npx electron-builder --${{ matrix.target }} --publish never
+        shell: bash
         env:
           # Unsigned builds until code-signing secrets are added
           CSC_IDENTITY_AUTO_DISCOVERY: "false"

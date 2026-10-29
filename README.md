@@ -1,4 +1,4 @@
-# FreeWord
+# Shiftword
 
 A free, offline, cross-platform Word-like document editor built with Electron + Tiptap —
 with an optional **Notion mode**. No accounts, no cloud, no telemetry — your documents
@@ -230,7 +230,7 @@ src/
                    + right-click menu
     ipc.ts         IPC handlers (open / save / save-raw / PDF / print / image /
                    external URL / settings / workspace pages)
-    docx-export.ts FreeWord JSON → .docx (docx library)
+    docx-export.ts Shiftword JSON → .docx (docx library)
     recent.ts      recent-files persistence
     settings.ts    Notion mode / theme / sidebar persistence (userData/settings.json)
     workspace.ts   page tree store (userData/workspace/)
@@ -263,8 +263,8 @@ src/
                      prompt/alert/confirm modals, zoom, image insert, link clicks,
                      appearance (Notion mode / theme)
       io/
-        import-docx.ts  .docx → DOM (docx-preview) → FreeWord JSON
-        import-other.ts .txt / .html → FreeWord JSON
+        import-docx.ts  .docx → DOM (docx-preview) → Shiftword JSON
+        import-other.ts .txt / .html → Shiftword JSON
         serialize.ts    editor state → JSON / text / HTML
 test/              vitest suite (pagination, docx export/import, IPC, smoke launch)
 scripts/           run-electron-safe.mjs, make-icon.py
@@ -275,7 +275,7 @@ build/             generated icons (see `npm run icons`)
 
 `docx-preview` renders the binary .docx into a DOM. A normalization pass
 converts its output (heading paragraphs, CSS-counter list paragraphs,
-`<section class="docx">` pages) into plain HTML matching FreeWord's schema,
+`<section class="docx">` pages) into plain HTML matching Shiftword's schema,
 and ProseMirror's `DOMParser` turns that into the document JSON. Links are
 kept when their scheme is one the app trusts and unwrapped (text preserved,
 payload dropped) otherwise. Embedded images are inlined as base64 data URLs so
@@ -291,10 +291,10 @@ they round-trip back through export.
   `.docx` file document still lives only in the window.
 - To-do / callout / code-block fidelity in `.docx` is best-effort: Word itself
   sees checkbox glyphs, shaded paragraphs and monospace runs rather than the
-  rich nodes (they re-hydrate when FreeWord re-opens its own export).
+  rich nodes (they re-hydrate when Shiftword re-opens its own export).
 - **Import** of the review features is best-effort: header/footer text comes
   back with page-number fields rendered as their first-page number, footnotes
-  re-hydrate from FreeWord's own export, and comments / Word-native revisions
+  re-hydrate from Shiftword's own export, and comments / Word-native revisions
   from other editors import as plain text. Files authored in Word or Google
   Docs keep all their body content either way.
 - Track changes are character-level: deleting an image or a whole table
@@ -306,7 +306,7 @@ they round-trip back through export.
 ## Trademarks
 
 "Notion mode" describes a presentation mode inspired by how Notion presents a
-page. **Notion** is a trademark of Notion Labs, Inc. — FreeWord is not
+page. **Notion** is a trademark of Notion Labs, Inc. — Shiftword is not
 affiliated with, endorsed by, or sponsored by Notion Labs. **Word** and
 **DOCX** are trademarks of Microsoft Corporation.
 

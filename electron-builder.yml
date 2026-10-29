@@ -1,5 +1,5 @@
-appId: com.freeword.app
-productName: FreeWord
+appId: com.shiftword.app
+productName: Shiftword
 # No `license` key: electron-builder rejects it and picks the root LICENSE file
 # up automatically for the NSIS licence page.
 directories:
@@ -34,8 +34,8 @@ linux:
     - AppImage
     - deb
   category: Office
-  maintainer: FreeWord
-  synopsis: FreeWord — offline Word-like document editor
+  maintainer: Shiftword
+  synopsis: Shiftword — offline Word-like document editor
   description: A free, offline, cross-platform Word-like document editor.
   # A directory of {16,24,...,512}.png gives the DE a crisp icon at every size
   # instead of one upscaled bitmap.

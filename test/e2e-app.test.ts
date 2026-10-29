@@ -45,7 +45,7 @@ function resetDom(): void {
     <div id="toolbar"></div>
     <div id="canvas"><div id="editor"></div></div>
     <div id="statusbar"></div>`;
-  document.title = "Untitled — FreeWord";
+  document.title = "Untitled — Shiftword";
 }
 
 function makeFw(): FwMock {
@@ -170,7 +170,7 @@ describe("menu commands", () => {
     const payload = fw.saveDoc.mock.calls[0][0];
     expect(payload.json.type).toBe("doc");
     expect(payload.defaultName).toMatch(/\.docx$/);
-    expect(document.title).toBe("Report — FreeWord");
+    expect(document.title).toBe("Report — Shiftword");
   });
 
   it("file:save keeps dirty when the save dialog is cancelled", async () => {
@@ -184,7 +184,7 @@ describe("menu commands", () => {
     fw.saveDoc.mockResolvedValue({ path: "/tmp/Other.docx" });
     await send("file:saveAs");
     expect(fw.saveDoc.mock.calls[0][0].path).toBeUndefined();
-    expect(document.title).toBe("Other — FreeWord");
+    expect(document.title).toBe("Other — Shiftword");
   });
 
   // Regression: openFile adopts the name while the document is clean, and
@@ -195,7 +195,7 @@ describe("menu commands", () => {
     fw.openFile.mockResolvedValue({ path: "/x/notes.txt", name: "notes.txt", ext: "txt", buffer: buf });
     await send("file:open");
     expect(editorEl().textContent).toContain("hello from txt");
-    expect(document.title).toBe("notes — FreeWord");
+    expect(document.title).toBe("notes — Shiftword");
     expect(document.title).not.toMatch(/^● /);
   });
 
@@ -225,7 +225,7 @@ describe("menu commands", () => {
 
       const pages = editorEl().querySelectorAll(".fw-page");
       expect(pages.length).toBeGreaterThan(1); // the layout really did change
-      expect(document.title).toBe("long — FreeWord");
+      expect(document.title).toBe("long — Shiftword");
       expect(document.title).not.toMatch(/^● /);
       // …and the page counter still reflects the new structure.
       expect(document.querySelector("#statusbar")!.textContent).toMatch(
@@ -285,7 +285,7 @@ describe("menu commands", () => {
     document.querySelector<HTMLButtonElement>("#fw-save-changes-discard")!.click();
     await new Promise((r) => setTimeout(r, 10));
     expect(editorEl().querySelector(".fw-pagebreak")).toBeFalsy();
-    expect(document.title).toBe("Untitled — FreeWord");
+    expect(document.title).toBe("Untitled — Shiftword");
   });
 
   it("the discard prompt's Save button saves through the normal save path", async () => {
@@ -299,7 +299,7 @@ describe("menu commands", () => {
     // The save cleared dirty, so newDoc ran without a second prompt.
     expect(document.querySelector("#fw-save-changes")).toBeNull();
     expect(editorEl().querySelector(".fw-pagebreak")).toBeFalsy();
-    expect(document.title).toBe("Untitled — FreeWord");
+    expect(document.title).toBe("Untitled — Shiftword");
   });
 
   it("Escape on the discard prompt cancels the switch", async () => {

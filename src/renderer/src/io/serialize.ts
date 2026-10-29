@@ -117,7 +117,7 @@ export function toHtml(editor: Editor): string {
     '<html lang="en">',
     "<head>",
     '<meta charset="utf-8">',
-    "<title>FreeWord Document</title>",
+    "<title>Shiftword Document</title>",
     "<style>",
     HTML_STYLES,
     "</style>",

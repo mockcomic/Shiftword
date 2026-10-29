@@ -59,7 +59,7 @@ export function createSidebar(handlers: SidebarHandlers): Sidebar {
   root.id = "sidebar";
   root.innerHTML = `
     <div class="side-head">
-      <span class="side-title">FreeWord</span>
+      <span class="side-title">Shiftword</span>
       <span class="side-head-actions">
         <button type="button" id="side-search" title="Quick switcher (Ctrl+K)">🔍</button>
         <button type="button" id="side-new" title="New page (Ctrl+Alt+N)">＋</button>

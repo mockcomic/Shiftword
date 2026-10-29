@@ -156,7 +156,7 @@ export function promptModal(opts: PromptOptions): Promise<string | null> {
 }
 
 /** Show a one-button message that does not block the renderer process. */
-export function alertDialog(message: string, title = "FreeWord"): Promise<void> {
+export function alertDialog(message: string, title = "Shiftword"): Promise<void> {
   return new Promise((resolve) => {
     preempt("fw-alert");
 

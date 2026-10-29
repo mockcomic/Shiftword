@@ -4,7 +4,7 @@
  * a compromised renderer is the threat model here, not the user.
  */
 
-/** Schemes FreeWord will store on a link and will open in the desktop browser. */
+/** Schemes Shiftword will store on a link and will open in the desktop browser. */
 const ALLOWED_SCHEMES = ["http:", "https:", "mailto:", "tel:"];
 
 /** Absolute URL with an allowed scheme, or null when it has none / is unsafe. */

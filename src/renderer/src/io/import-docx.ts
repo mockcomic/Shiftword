@@ -553,7 +553,7 @@ export function sanitizeAnchors(root: HTMLElement): void {
 }
 
 /**
- * Keep only images FreeWord can persist (data: URLs of formats the DOCX
+ * Keep only images Shiftword can persist (data: URLs of formats the DOCX
  * writer supports) and record their rendered size as width/height attributes
  * so the editor and export keep the original dimensions.
  */
@@ -631,7 +631,7 @@ function normalizeDom(root: HTMLElement, orderedTokens: Set<string>): void {
 
 /**
  * Convert a rendered docx-preview container (or any Word-like HTML block
- * container) into a FreeWord doc JSON:
+ * container) into a Shiftword doc JSON:
  *
  *   <div class="docx-wrapper">
  *     <section class="docx">…page 1…</section>
@@ -715,7 +715,7 @@ export function domToDoc(
 
 /**
  * Render a .docx buffer with docx-preview into a detached container and
- * convert it to a FreeWord doc JSON.
+ * convert it to a Shiftword doc JSON.
  */
 export async function docxBufferToDoc(buffer: Uint8Array, schema: Schema): Promise<Record<string, unknown>> {
   const container = document.createElement("div");

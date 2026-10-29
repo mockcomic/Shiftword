@@ -378,7 +378,7 @@ export async function deletePage(id: string): Promise<{ error?: string }> {
           hadFile = true;
           json = JSON.parse(raw);
         } catch (err) {
-          if (!isNotFound(err)) console.warn(`[FreeWord] trashing unreadable page doc ${d}`, err);
+          if (!isNotFound(err)) console.warn(`[Shiftword] trashing unreadable page doc ${d}`, err);
         }
         const stamp = `${Date.now().toString(36)}-${(trashSeq++).toString(36)}${Math.random()
           .toString(36)

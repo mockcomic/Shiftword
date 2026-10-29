@@ -18,7 +18,7 @@ export const FW_FOOTER_RESERVE_PX = 28;
  * comment store the `comment` mark references — all of it travels inside
  * the document JSON, so page autosave and the .docx round-trip cover it.
  */
-export const FreeWordDoc = Node.create({
+export const ShiftwordDoc = Node.create({
   name: "doc",
   topNode: true,
   content: "page+",

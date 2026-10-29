@@ -38,7 +38,7 @@ const sandboxDisabled = process.env.ELECTRON_DISABLE_SANDBOX === "1";
 if (sandboxDisabled) {
   app.commandLine.appendSwitch("no-sandbox");
   console.warn(
-    "[FreeWord] WARNING: the renderer sandbox is DISABLED (ELECTRON_DISABLE_SANDBOX=1)." +
+    "[Shiftword] WARNING: the renderer sandbox is DISABLED (ELECTRON_DISABLE_SANDBOX=1)." +
       " Only use this to work around an environment that cannot start Chromium's sandbox broker.",
   );
 }
@@ -98,7 +98,7 @@ async function handleQuitResponse(
     // A rejecting dialog (window destroyed mid-dialog) used to escape as an
     // unhandled rejection with `awaitingResponse` stuck true — after that the
     // app could never be quit again from the close button or the menu.
-    console.error("[FreeWord] quit handshake failed:", err);
+    console.error("[Shiftword] quit handshake failed:", err);
     awaitingResponse = false;
     pendingSaveQuit = false;
     clearQuitTimer();
@@ -135,7 +135,7 @@ async function handleQuitResponseInner(
     type: "warning",
     title: "Unsaved changes",
     message: `"${payload?.name ?? "Document"}" has unsaved changes.`,
-    detail: "Do you want to save the changes before closing FreeWord?",
+    detail: "Do you want to save the changes before closing Shiftword?",
     buttons: ["Save", "Discard", "Cancel"],
     defaultId: 0,
     cancelId: 2,
@@ -211,7 +211,7 @@ function blockHostileContents(): void {
     // stray `window.open` or a link click that escaped the renderer's own
     // handler must never produce a second, un-guarded renderer.
     contents.setWindowOpenHandler(({ url }) => {
-      console.warn(`[FreeWord] blocked window.open → ${url}`);
+      console.warn(`[Shiftword] blocked window.open → ${url}`);
       return { action: "deny" as const };
     });
 
@@ -220,14 +220,14 @@ function blockHostileContents(): void {
       // navigation away from that URL would replace the editor with a page.
       if (!isAllowedNavigation(url)) {
         event.preventDefault();
-        console.warn(`[FreeWord] blocked navigation to ${url}`);
+        console.warn(`[Shiftword] blocked navigation to ${url}`);
       }
     });
     // Nested frames navigate on their own channel; guard it the same way.
     contents.on("will-frame-navigate", (event) => {
       if (!isAllowedNavigation(event.url)) {
         event.preventDefault();
-        console.warn(`[FreeWord] blocked frame navigation to ${event.url}`);
+        console.warn(`[Shiftword] blocked frame navigation to ${event.url}`);
       }
     });
 
@@ -238,14 +238,14 @@ function blockHostileContents(): void {
   // or notification: every permission request is refused, not silently granted
   // by a default that was written for a browser.
   session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
-    console.warn(`[FreeWord] denied permission request: ${permission}`);
+    console.warn(`[Shiftword] denied permission request: ${permission}`);
     callback(false);
   });
   // The *check* channel is separate from the *request* one — without this,
   // synchronous checks (alert(), clipboard-read, …) still fall through to
   // Electron's allow-by-default answer.
   session.defaultSession.setPermissionCheckHandler((_wc, permission) => {
-    console.warn(`[FreeWord] denied permission check: ${permission}`);
+    console.warn(`[Shiftword] denied permission check: ${permission}`);
     return false;
   });
 }
@@ -279,7 +279,7 @@ function createWindow(): void {
     width: 1440,
     height: 900,
     minWidth: 900,
-    title: "Untitled — FreeWord",
+    title: "Untitled — Shiftword",
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
@@ -292,13 +292,13 @@ function createWindow(): void {
   // A window that is created but never paints looks exactly like a window that
   // never appeared, so record what actually happened to it.
   mainWindow.webContents.on("did-fail-load", (_event, code, description, url) => {
-    console.error(`[FreeWord] page load failed (${code} ${description}) for ${url}`);
+    console.error(`[Shiftword] page load failed (${code} ${description}) for ${url}`);
   });
   mainWindow.webContents.on("render-process-gone", (_event, details) => {
-    console.error(`[FreeWord] renderer process gone: ${details.reason} (exit ${details.exitCode})`);
+    console.error(`[Shiftword] renderer process gone: ${details.reason} (exit ${details.exitCode})`);
   });
   mainWindow.on("unresponsive", () => {
-    console.error("[FreeWord] window is not responding");
+    console.error("[Shiftword] window is not responding");
   });
 
   // Route every window close through the quit handshake.
@@ -351,7 +351,7 @@ if (!app.requestSingleInstanceLock()) {
   // here too, and without this line the app exits silently — indistinguishable
   // from "the app refuses to launch".
   console.warn(
-    "[FreeWord] another instance already holds the single-instance lock — exiting." +
+    "[Shiftword] another instance already holds the single-instance lock — exiting." +
       ` (userData: ${app.getPath("userData")})`,
   );
   app.quit();

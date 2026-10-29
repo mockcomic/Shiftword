@@ -340,7 +340,7 @@ export function runPagination(editor: Editor): boolean {
     } catch (err) {
       // A layout problem must never break the document: leave the current
       // pages as they are instead of throwing out of the update/rAF callback.
-      console.error("[FreeWord] pagination could not be applied", err);
+      console.error("[Shiftword] pagination could not be applied", err);
       break;
     }
     // Page starts must use the same convention on both sides of the selection
@@ -368,7 +368,7 @@ export function runPagination(editor: Editor): boolean {
 
   if (appliedCount >= MAX_PAGINATION_PASSES) {
     console.warn(
-      `FreeWord pagination did not settle within ${MAX_PAGINATION_PASSES} passes; stopping to avoid a jitter loop.`,
+      `Shiftword pagination did not settle within ${MAX_PAGINATION_PASSES} passes; stopping to avoid a jitter loop.`,
     );
   }
   if (appliedCount > 0 && typeof window !== "undefined") {

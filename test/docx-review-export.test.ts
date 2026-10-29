@@ -3,7 +3,7 @@
  * Feature-complete exports: headers/footers (with PAGE/NUMPAGES fields),
  * footnotes (`footnotes.xml` + references), comments (`comments.xml`), and
  * native Word tracked changes (`w:ins`/`w:del`) — plus a round-trip of
- * everything FreeWord itself writes.
+ * everything Shiftword itself writes.
  */
 import { describe, expect, it } from "vitest";
 import { strFromU8, unzipSync } from "fflate";
@@ -126,7 +126,7 @@ describe("docx export — review features", () => {
   });
 });
 
-describe("docx import — round-trips what FreeWord wrote", () => {
+describe("docx import — round-trips what Shiftword wrote", () => {
   it("imports footnotes back as footnoteRef nodes carrying the note text", async () => {
     const doc: PM = {
       type: "doc",

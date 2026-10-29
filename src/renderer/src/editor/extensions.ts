@@ -17,7 +17,7 @@ import { FontFamily, FontSize, TextStyle } from "@tiptap/extension-text-style";
 import { Text } from "@tiptap/extension-text";
 import { Underline } from "@tiptap/extension-underline";
 import { Italic } from "@tiptap/extension-italic";
-import { FreeWordDoc, Page, PageBreak } from "./schema";
+import { ShiftwordDoc, Page, PageBreak } from "./schema";
 import { Code } from "./code";
 import { Cursors } from "./cursors";
 import { HardBreak } from "./hard-break";
@@ -74,7 +74,7 @@ const ShadingAwareHighlight = Highlight.extend({
  */
 export function createExtensions() {
   return [
-    FreeWordDoc,
+    ShiftwordDoc,
     Page,
     PageBreak,
     Paragraph.extend({

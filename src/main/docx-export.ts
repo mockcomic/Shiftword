@@ -1077,19 +1077,19 @@ function documentStyles() {
     // stay as direct formatting because Google Docs can drop style ids on
     // re-export and the importer's fallback detection keys on the visuals.
     paragraphStyles: [
-      { id: "FwTaskItem", name: "FreeWord Task Item", basedOn: "Normal" as const },
-      { id: "FwCallout", name: "FreeWord Callout", basedOn: "Normal" as const },
-      { id: "FwQuote", name: "FreeWord Quote", basedOn: "Normal" as const, next: "Normal" as const },
+      { id: "FwTaskItem", name: "Shiftword Task Item", basedOn: "Normal" as const },
+      { id: "FwCallout", name: "Shiftword Callout", basedOn: "Normal" as const },
+      { id: "FwQuote", name: "Shiftword Quote", basedOn: "Normal" as const, next: "Normal" as const },
       {
         id: "FwCodeBlock",
-        name: "FreeWord Code Block",
+        name: "Shiftword Code Block",
         basedOn: "Normal" as const,
         run: { font: FONT_CODE, size: CODE_SIZE_HALF_POINTS },
       },
-      { id: "FwDivider", name: "FreeWord Divider", basedOn: "Normal" as const },
-      { id: "FwToggle", name: "FreeWord Toggle", basedOn: "Normal" as const },
-      { id: "FwToggleBody", name: "FreeWord Toggle Body", basedOn: "Normal" as const },
-      { id: "FwToc", name: "FreeWord Table of Contents", basedOn: "Normal" as const },
+      { id: "FwDivider", name: "Shiftword Divider", basedOn: "Normal" as const },
+      { id: "FwToggle", name: "Shiftword Toggle", basedOn: "Normal" as const },
+      { id: "FwToggleBody", name: "Shiftword Toggle Body", basedOn: "Normal" as const },
+      { id: "FwToc", name: "Shiftword Table of Contents", basedOn: "Normal" as const },
     ],
   };
 }
@@ -1154,8 +1154,8 @@ export async function toDocxBuffer(pm: Record<string, unknown>): Promise<Buffer>
   const footerText = typeof attrs.footer === "string" && attrs.footer ? attrs.footer : null;
 
   const docx = new Document({
-    creator: "FreeWord",
-    title: "FreeWord Document",
+    creator: "Shiftword",
+    title: "Shiftword Document",
     styles: documentStyles(),
     numbering: { config: ordered.toConfig() },
     ...(ctx.commentDefs.length > 0 ? { comments: { children: ctx.commentDefs } } : {}),

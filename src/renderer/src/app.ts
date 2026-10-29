@@ -126,7 +126,7 @@ async function flushPageSave(): Promise<boolean> {
       }
     } else {
       // Keep the document dirty so the quit prompt still protects the user.
-      console.error("[FreeWord] page autosave failed");
+      console.error("[Shiftword] page autosave failed");
     }
     return ok;
   });
@@ -388,7 +388,7 @@ async function emptyTrashUI(): Promise<void> {
 }
 
 function updateTitle(): void {
-  document.title = `${dirty ? "● " : ""}${docName} — FreeWord`;
+  document.title = `${dirty ? "● " : ""}${docName} — Shiftword`;
 }
 
 function markDirty(): void {
@@ -593,7 +593,7 @@ function commitSavedPath(savedPath: string): void {
 /** Show the native error the main process already reported, and log for the console. */
 function reportFailure(what: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
-  console.error(`[FreeWord] ${what}: ${message}`);
+  console.error(`[Shiftword] ${what}: ${message}`);
   void alertDialog(`${what}: ${message}`);
 }
 
@@ -618,7 +618,7 @@ async function doSave(path: string | undefined): Promise<SaveOutcome> {
   if (!res) return "cancelled";
   if (res.error) {
     // The main process already surfaced a native error dialog for this.
-    console.error(`[FreeWord] save failed: ${res.error}`);
+    console.error(`[Shiftword] save failed: ${res.error}`);
     return "failed";
   }
   if (!res.path) return "cancelled";
@@ -654,7 +654,7 @@ async function exportFormat(ext: "txt" | "html"): Promise<SaveOutcome> {
   }
   if (!res) return "cancelled";
   if (res.error) {
-    console.error(`[FreeWord] export .${ext} failed: ${res.error}`);
+    console.error(`[Shiftword] export .${ext} failed: ${res.error}`);
     return "failed";
   }
   return res.path ? "saved" : "cancelled";
@@ -666,7 +666,7 @@ async function exportPdf(): Promise<void> {
   await nextFrame();
   try {
     const res = await fw.exportPdf(`${docName}.pdf`);
-    if (res?.error) console.error(`[FreeWord] PDF export failed: ${res.error}`);
+    if (res?.error) console.error(`[Shiftword] PDF export failed: ${res.error}`);
   } catch (err) {
     // A rejection here used to vanish into the void: `void exportPdf()` meant
     // choosing a path and getting nothing at all.
@@ -682,7 +682,7 @@ async function printDoc(): Promise<void> {
   await nextFrame();
   try {
     const res = await fw.print();
-    if (res?.error) console.error(`[FreeWord] print failed: ${res.error}`);
+    if (res?.error) console.error(`[Shiftword] print failed: ${res.error}`);
   } catch (err) {
     reportFailure("Could not print", err);
   } finally {

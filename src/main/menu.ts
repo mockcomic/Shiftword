@@ -24,8 +24,8 @@ function send(id: string, filePath?: string): void {
 function showAbout(): void {
   const options: MessageBoxOptions = {
     type: "info",
-    title: "About FreeWord",
-    message: `FreeWord ${app.getVersion()}`,
+    title: "About Shiftword",
+    message: `Shiftword ${app.getVersion()}`,
     detail:
       "An offline Word-like document editor with find & replace, headers &\n" +
       "footers, footnotes, comments and track changes.\n\n" +
@@ -34,7 +34,7 @@ function showAbout(): void {
       "• A block taller than one page may be clipped in PDF export.\n" +
       "• Forced page breaks in imported .docx files may be re-paginated.\n" +
       "• Headers/footers, footnotes, comments and tracked changes round-trip\n" +
-      "  from FreeWord's own exports; files authored in other editors import\n" +
+      "  from Shiftword's own exports; files authored in other editors import\n" +
       "  as best-effort plain content.",
     buttons: ["OK"],
   };
@@ -245,7 +245,7 @@ export async function rebuildMenu(): Promise<void> {
     },
     {
       label: "Help",
-      submenu: [{ label: "About FreeWord", click: showAbout }],
+      submenu: [{ label: "About Shiftword", click: showAbout }],
     },
   ];
 

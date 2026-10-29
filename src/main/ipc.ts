@@ -395,7 +395,7 @@ export function registerIpc(getWindow: GetWindow, onFilesChanged: () => void): v
     if (!trustedSender(event, getWindow)) return false;
     const safe = safeExternalUrl(url);
     if (!safe) {
-      console.warn("[FreeWord] refused to open an external URL with a disallowed scheme");
+      console.warn("[Shiftword] refused to open an external URL with a disallowed scheme");
       return false;
     }
     try {

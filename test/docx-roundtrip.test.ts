@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 // Full import integration: a .docx produced by the `docx` library (table +
 // embedded image) is rendered with docx-preview and converted back into a
-// FreeWord doc JSON via docxBufferToDoc.
+// Shiftword doc JSON via docxBufferToDoc.
 import { describe, expect, it } from "vitest";
 import { Document, ImageRun, Packer, Paragraph, Table, TableCell, TableRow, TextRun } from "docx";
 import { unzipSync, strFromU8 } from "fflate";
@@ -99,7 +99,7 @@ describe("docx round-trip import (docx-preview)", () => {
 
 // ---------------------------------------------------------------------------
 // Formatting fidelity: what the exporter writes, the importer must read back
-// — the FreeWord ⇄ Word ⇄ Google Docs consistency contract.
+// — the Shiftword ⇄ Word ⇄ Google Docs consistency contract.
 // ---------------------------------------------------------------------------
 
 function docOf(attrs: Record<string, unknown>, blocks: unknown[]) {

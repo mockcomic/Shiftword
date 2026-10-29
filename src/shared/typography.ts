@@ -4,7 +4,7 @@
  * The editor CSS (`.fw-page` rules in renderer/src/styles.css), the standalone
  * HTML export (io/serialize.ts) and the DOCX export (main/docx-export.ts) all
  * derive their values from here so a document renders identically in
- * FreeWord, Microsoft Word, and Google Docs. The test-suite parses
+ * Shiftword, Microsoft Word, and Google Docs. The test-suite parses
  * styles.css and fails if it drifts from these numbers.
  */
 

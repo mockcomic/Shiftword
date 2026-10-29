@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Run FreeWord with Electron — no packaging, no manual build step.
+ * Run Shiftword with Electron — no packaging, no manual build step.
  *
  * `npm run dev` serves the renderer through the Vite dev server (hot reload);
  * `dist:*` scripts run electron-builder and produce installers. Both are not

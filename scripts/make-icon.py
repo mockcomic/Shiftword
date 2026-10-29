@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate FreeWord's application icons into build/.
+"""Generate Shiftword's application icons into build/.
 
 electron-builder is pointed at build/icon.png (see electron-builder.yml); this
 script is the source of that asset so the artwork is reproducible instead of a

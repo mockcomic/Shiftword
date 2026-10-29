@@ -1,4 +1,4 @@
-# FreeWord — Bug & Efficiency Audit
+# Shiftword — Bug & Efficiency Audit
 
 Full-codebase review (main process, preload, editor, features, io).
 **Fixed** items ship with this change; **Open** items are recommendations with suggested fixes.

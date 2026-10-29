@@ -1,8 +1,8 @@
 {
-  "name": "freeword",
+  "name": "shiftword",
   "version": "1.1.0",
-  "description": "FreeWord — offline Word-like document editor",
-  "author": "FreeWord contributors",
+  "description": "Shiftword — offline Word-like document editor",
+  "author": "Shiftword contributors",
   "license": "MIT",
   "private": true,
   "main": "./out/main/index.js",

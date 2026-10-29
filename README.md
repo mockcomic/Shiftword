@@ -303,6 +303,13 @@ they round-trip back through export.
   edge may need the margins widened (View → Page Setup) for the notes to sit
   clear of the text.
 
+## Trademarks
+
+"Notion mode" describes a presentation mode inspired by how Notion presents a
+page. **Notion** is a trademark of Notion Labs, Inc. — FreeWord is not
+affiliated with, endorsed by, or sponsored by Notion Labs. **Word** and
+**DOCX** are trademarks of Microsoft Corporation.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
